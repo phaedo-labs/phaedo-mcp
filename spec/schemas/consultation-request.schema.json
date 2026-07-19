@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getphaedo.com/spec/consultation-request.schema.json",
+  "title": "Phaedo Consultation Request",
+  "description": "The query an agent sends to phaedo_consult at a decision point (Phaedo Protocol v0.1 §10.2).",
+  "type": "object",
+  "required": ["consultation_type"],
+  "properties": {
+    "phaedo_request_version": { "type": "string" },
+    "request_type": { "const": "consultation" },
+    "consultation_type": { "enum": ["action_approval", "voice_draft", "domain_risk_check", "escalation_default"] },
+    "agent_id": { "type": "string" },
+    "agent_credential": { "type": "string", "description": "RESERVED for v0.3 authenticated agent identity (§10.5 / OQ9). Today `agent_id` is self-asserted; v0.3 will carry a signed per-agent credential here so a subject can scope `agents` honestly. Optional and ignored by v0.1 resolvers — declared now so the v0.3 addition is backward-compatible." },
+    "action_descriptor": {
+      "type": "object",
+      "properties": {
+        "domain": { "type": "string" },
+        "reversible": { "type": "boolean" },
+        "magnitude": { "enum": ["low", "medium", "high"] },
+        "amount": { "type": "number", "description": "Optional numeric stake (e.g. dollar amount) an authored policy's `amount_gt` threshold can match against (§10.5)." },
+        "summary": { "type": "string" }
+      }
+    },
+    "context": { "type": "object", "description": "Free-form situational hints, e.g. { deadline_pressure, evidence_provided: [] }." }
+  }
+}

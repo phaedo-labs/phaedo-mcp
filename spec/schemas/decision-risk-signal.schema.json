@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getphaedo.com/spec/decision-risk-signal.schema.json",
+  "title": "Phaedo Decision & Risk Signal",
+  "description": "Per-signal shape for the Decision and Risk layer's signals[] (Phaedo Protocol v0.1 §4.2.7). Resolves open question 13 for this layer first — the hero layer for consultation — so a deterministic resolver can consume it without guessing. Other layers' signal shapes remain implementation-defined in v0.1. This is the shape the reference extraction pipeline emits (extraction/fingerprint-update.js) and the consultation resolver consumes (mcp/consult-core.js).",
+  "type": "object",
+  "required": ["dimension", "polarity", "value", "confidence", "evidence_basis"],
+  "properties": {
+    "signal_id": { "type": "string", "description": "Stable per-signal id (UUID)." },
+    "field": { "type": "string", "description": "Producer field id (alias of dimension; retained for back-compat)." },
+    "dimension": {
+      "type": "string",
+      "description": "Which decision axis this signal captures, e.g. evidence_threshold | speed_vs_quality | options_vs_recommendation | ambiguity_posture | reversible_vs_irreversible."
+    },
+    "polarity": {
+      "enum": ["positive", "negative"],
+      "description": "Per §4.3. A negative (anti-preference) signal takes precedence over a contradicting positive in the same layer."
+    },
+    "value": {
+      "type": ["string", "number", "array", "boolean"],
+      "description": "The signal value — an enum token (e.g. more_cautious), a scalar in [0,1], or a list."
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1, "description": "Per-signal confidence. A resolver SHOULD weigh signals by this and MAY gate on a threshold." },
+    "evidence_basis": {
+      "enum": ["observed", "corroborated", "self_reported"],
+      "description": "How the signal was learned: observed (from behavior), corroborated (observed + self-reported agree), or self_reported (authored/questionnaire). Consumers SHOULD trust observed/corroborated above self_reported."
+    },
+    "source": { "type": "string", "description": "Producer-internal provenance string evidence_basis is derived from." },
+    "domain": {
+      "type": "string",
+      "description": "OPTIONAL. The domain this signal pertains to (e.g. financial, legal, writing), in the same case-insensitive-substring namespace as action_descriptor.domain and authored policies. PROTOTYPE emission: the reference extraction tags Decision&Risk signals with a session's inferred domain only when one domain clearly dominates (extraction/domain-inference.js); ambiguous sessions stay untagged. Consumers prefer a matching-domain signal, fall back to untagged, and never borrow a wrong-domain signal. Tag accuracy is under real-use evaluation."
+    },
+    "threshold": {
+      "type": "object",
+      "description": "OPTIONAL. A magnitude/numeric gate (e.g. { magnitude_min, amount_gt }). RESERVED — not yet emitted; future work alongside domain scoping.",
+      "additionalProperties": true
+    },
+    "observation_count": { "type": "integer", "minimum": 1 },
+    "session_refs": { "type": "array", "items": { "type": "string" } },
+    "last_observed": { "type": "string" }
+  }
+}

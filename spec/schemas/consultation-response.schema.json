@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getphaedo.com/spec/consultation-response.schema.json",
+  "title": "Phaedo Consultation Response",
+  "description": "The constrained signal returned by phaedo_consult (Phaedo Protocol v0.1 §10.3). Carries ONLY signals — never fingerprint or layer content (§10.4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["phaedo_response_version", "request_type", "consultation_type", "signal", "confidence", "rationale_hint", "deference_level"],
+  "properties": {
+    "phaedo_response_version": { "const": "0.1" },
+    "request_type": { "const": "consultation" },
+    "consultation_type": { "enum": ["action_approval", "voice_draft", "domain_risk_check", "escalation_default"] },
+    "signal": {
+      "enum": ["proceed", "proceed_with_note", "clarify", "escalate", "decline", "insufficient_signal"],
+      "description": "proceed: pattern aligns · proceed_with_note: aligns, flag for review · clarify: gather more first · escalate: surface to the subject · decline: pattern opposes the action · insufficient_signal: abstain — the fingerprint lacks coverage to answer (distinct from clarify and from an error; §10.3)."
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "rationale_hint": {
+      "type": "string", "maxLength": 280,
+      "description": "A short, derived PATTERN statement (never raw fingerprint text). May convey policy provenance (\"Per your standing rule: …\")."
+    },
+    "deference_level": {
+      "enum": ["high", "medium", "low"],
+      "description": "How strongly the agent should weight the signal. Sparse fingerprint → low."
+    }
+  }
+}

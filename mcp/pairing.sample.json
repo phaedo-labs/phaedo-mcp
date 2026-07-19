@@ -1,0 +1,8 @@
+{
+  "_comment": "Phase 1b pairing record (Option B: shared with the extension). Copy to mcp/pairing.json (gitignored) or point PHAEDO_PAIRING at it. These are the fields from the extension's phaedo_local_pairing. pair_key is a long-term secret — never commit a real one.",
+  "endpoint": "http://192.168.1.50:7432",
+  "client_id": "REPLACE_WITH_EXTENSION_client_id",
+  "client_secret": "REPLACE_WITH_EXTENSION_client_secret",
+  "pair_key": "REPLACE_WITH_EXTENSION_pair_key_base64url_32_bytes",
+  "vault_pub": "REPLACE_WITH_phone_vault_pub_base64url"
+}

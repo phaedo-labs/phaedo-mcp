@@ -1,0 +1,108 @@
+{
+  "_status": "QUEUED FOR REVIEW (Proposal 0007, rev. 3). Not wired into the live interview. Shaped to drop into questionnaire_schema.js as a Decision & Risk depth module once 0007 is folded.",
+  "id": "dm_decision_rules",
+  "label": "Decision rules",
+  "layer": "decision_and_risk",
+  "estimated_minutes": 4,
+  "produces": "standing_rules[] (kind: instruction)",
+  "_flow": "Per item: (1) surface — a concrete scenario draws out the rule; (2) reflect — the system phrases a first-person candidate back from the free-text answer; (3) endorse — the user accepts/edits/skips (endorse is the only write); (4) bound — the exception is captured in the same pass. Endorsing writes one standing_rules entry (kind:instruction) with the item's `binding` as `decision`. Skipping writes nothing. These are AUTHORED rules, not inferred signals — they carry no confidence score (§5). `priority` orders the injected Operating-rules block (lower first); hard lines get the lowest numbers.",
+  "question_type": {
+    "name": "rule_elicitation",
+    "fields": {
+      "scenario": "Free-text prompt that surfaces the rule without asking for it abstractly.",
+      "reflect_template": "How to render the user's answer back as a first-person candidate for endorsement. `{rule}` = extracted rule clause, `{exception}` = extracted boundary clause (may be empty); `{exception_suffix}` expands to ' (Exception: {exception})' or '' when empty.",
+      "exception_probe": "Shown if the answer carried no boundary; optional to fill.",
+      "endorse": "accept | edit | skip — only accept/edit writes."
+    }
+  },
+  "questions": [
+    {
+      "id": "dr1_hard_line",
+      "type": "rule_elicitation",
+      "dimension": "evidence_threshold",
+      "scenario": "Name one thing you will NOT do when making a call, even under pressure to move fast.",
+      "helper_text": "The flat 'I don't / I won't' line. Example: 'I won't approve a recurring cost until the figure is confirmed in writing.'",
+      "reflect_template": "Proposed rule: \"{rule}\"{exception_suffix} — endorse, edit, or skip.",
+      "exception_probe": "Is there a case where this line does NOT apply? (Optional — leave blank if it's absolute.)",
+      "binding": { "dimension": "evidence_threshold", "polarity": "negative" },
+      "writes": {
+        "kind": "instruction",
+        "scope": "global",
+        "priority": 10,
+        "text": "{rule}",
+        "exception": "{exception}",
+        "decision": { "dimension": "evidence_threshold", "polarity": "negative" }
+      }
+    },
+    {
+      "id": "dr2_ambiguity",
+      "type": "rule_elicitation",
+      "dimension": "ambiguity_posture",
+      "scenario": "When a request is underspecified or could mean two different things, what is your first move — before you do any of the work?",
+      "helper_text": "The default reflex on ambiguity. Example: 'I ask one clarifying question before acting.'",
+      "reflect_template": "Proposed rule: \"{rule}\"{exception_suffix} — endorse, edit, or skip.",
+      "exception_probe": "When do you skip that and just proceed instead? (Optional.)",
+      "binding": { "dimension": "ambiguity_posture", "polarity": "positive" },
+      "writes": {
+        "kind": "instruction",
+        "scope": "global",
+        "priority": 30,
+        "text": "{rule}",
+        "exception": "{exception}",
+        "decision": { "dimension": "ambiguity_posture", "polarity": "positive" }
+      }
+    },
+    {
+      "id": "dr3_reversibility",
+      "type": "rule_elicitation",
+      "dimension": "reversible_vs_irreversible",
+      "scenario": "Think of a decision you cannot easily undo. What do you do differently than for one you can reverse?",
+      "helper_text": "The split between one-way and two-way doors. Example: 'On irreversible calls I slow down and seek more input; on reversible ones I move fast.'",
+      "reflect_template": "Proposed rule: \"{rule}\"{exception_suffix} — endorse, edit, or skip.",
+      "exception_probe": "Anything that overrides this — stakes, deadline, who's affected? (Optional.)",
+      "binding": { "dimension": "reversible_vs_irreversible", "polarity": "positive" },
+      "writes": {
+        "kind": "instruction",
+        "scope": "global",
+        "priority": 30,
+        "text": "{rule}",
+        "exception": "{exception}",
+        "decision": { "dimension": "reversible_vs_irreversible", "polarity": "positive" }
+      }
+    },
+    {
+      "id": "dr4_tradeoff",
+      "type": "rule_elicitation",
+      "dimension": "speed_vs_quality",
+      "scenario": "When moving quickly and getting it exactly right pull against each other, which one gives — and is that always true?",
+      "helper_text": "The tradeoff under tension. The 'is that always true' half usually surfaces the exception in the same answer. Example: 'I trade speed for accuracy on consequential work, but move fast on small reversible stuff.'",
+      "reflect_template": "Proposed rule: \"{rule}\"{exception_suffix} — endorse, edit, or skip.",
+      "exception_probe": "Where does the opposite hold? (Optional — often the second half of your answer above.)",
+      "binding": { "dimension": "speed_vs_quality", "polarity": "positive" },
+      "writes": {
+        "kind": "instruction",
+        "scope": "global",
+        "priority": 40,
+        "text": "{rule}",
+        "exception": "{exception}",
+        "decision": { "dimension": "speed_vs_quality", "polarity": "positive" }
+      }
+    }
+  ],
+  "_example_transform": {
+    "item": "dr4_tradeoff",
+    "user_answer": "I'd rather be slower and right, but not on small reversible stuff where speed is fine.",
+    "reflected_candidate": "Proposed rule: \"I trade speed for accuracy on consequential or irreversible decisions.\" (Exception: on small, reversible decisions I move fast and accept rough edges.) — endorse, edit, or skip.",
+    "on_endorse_writes": {
+      "instruction_id": "<uuid>",
+      "kind": "instruction",
+      "text": "I trade speed for accuracy on consequential or irreversible decisions.",
+      "exception": "On small, reversible decisions I move fast and accept rough edges.",
+      "scope": "global",
+      "priority": 40,
+      "decision": { "dimension": "speed_vs_quality", "polarity": "positive" },
+      "created_at": "<rfc3339>",
+      "updated_at": "<rfc3339>"
+    }
+  }
+}

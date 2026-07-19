@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getphaedo.com/spec/authorization-check-response.schema.json",
+  "title": "Phaedo Authorization Check Response",
+  "description": "The result of phaedo_check_authorization — a deterministic-only pre-flight that reports whether a standing authorization (§10.5 force rule) already decides an action. Skips inferred evaluation. Carries ONLY the rule's decision + provenance, never fingerprint or layer content (§10.4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["phaedo_response_version", "request_type", "consultation_type", "authorization_matched", "signal", "rule_id", "rationale_hint"],
+  "properties": {
+    "phaedo_response_version": { "const": "0.1" },
+    "request_type": { "const": "authorization_check" },
+    "consultation_type": { "enum": ["action_approval", "voice_draft", "domain_risk_check", "escalation_default"] },
+    "authorization_matched": { "type": "boolean", "description": "true when a standing authorization fired for this action." },
+    "signal": {
+      "type": ["string", "null"],
+      "enum": ["escalate", "decline", "proceed", null],
+      "description": "The authorized decision when matched (force effects resolve to escalate | decline | proceed); null when no authorization matches. A matched authorization is a deterministic pre-decision: confidence 1.0, deference high."
+    },
+    "rule_id": { "type": ["string", "null"], "description": "The id of the authorization that fired, or null." },
+    "rationale_hint": { "type": "string", "maxLength": 280, "description": "Provenance when matched (\"Per your standing rule: …\"), or guidance to fall back to phaedo_consult when not." }
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "phaedo_fingerprint": {
+    "phaedo_protocol_version": "0.1",
+    "fingerprint_id": "sample-0000-0000-0000-000000000000",
+    "subject_id": "sample-subj-0000-0000-000000000000",
+    "schema_revision": 1,
+    "updated_at": "2026-06-01T12:00:00.000Z",
+    "persona_strength": 0.58,
+    "layers": {
+      "surface": {
+        "label": "Communication style",
+        "responses": [
+          {
+            "label": "Response Length",
+            "question": "How long should answers be?",
+            "answer": "Thorough — go deep and cover edge cases. Length is fine when it earns its place."
+          },
+          {
+            "label": "Formatting",
+            "question": "Preferred formatting?",
+            "answer": "Inline examples first, then plain prose, then bullet lists. Numbered steps for procedures."
+          }
+        ],
+        "summary": "Prefers concise, direct answers; bottom-line first.",
+        "signals": [
+          {
+            "field": "response_length_pref",
+            "polarity": "positive",
+            "value": "thorough",
+            "confidence": 0.7,
+            "observation_count": 1,
+            "source": "questionnaire"
+          },
+          {
+            "field": "directness",
+            "polarity": "positive",
+            "value": "high",
+            "confidence": 0.62,
+            "observation_count": 3,
+            "source": "delta"
+          }
+        ]
+      },
+      "domain_and_expertise": {
+        "label": "Domain and expertise",
+        "responses": [
+          {
+            "label": "Primary Expertise",
+            "question": "What is your domain?",
+            "answer": "Operational frameworks, policy, and process for HR teams. Uses Python and SQL occasionally to wrangle data."
+          }
+        ],
+        "signals": [
+          {
+            "field": "expertise_domain",
+            "polarity": "positive",
+            "value": "operations",
+            "confidence": 0.7,
+            "observation_count": 1,
+            "source": "questionnaire"
+          }
+        ]
+      },
+      "decision_and_risk": {
+        "label": "Decision and risk",
+        "responses": [
+          {
+            "label": "Decision Threshold",
+            "question": "When do you commit?",
+            "answer": "Make sure I have covered the main risks before committing."
+          },
+          {
+            "label": "Value Tradeoffs",
+            "question": "What do you trade off?",
+            "answer": "Accuracy over speed; Thoroughness over simplicity."
+          }
+        ]
+      },
+      "behavioral": {
+        "label": "Working style",
+        "responses": [
+          {
+            "label": "Handling Ambiguity",
+            "question": "When a request is ambiguous?",
+            "answer": "Ask a clarifying question before doing anything."
+          }
+        ]
+      }
+    }
+  },
+  "phaedo_behavioral_signals": {
+    "surface": {
+      "too_long": 3,
+      "more_direct": 2
+    }
+  },
+  "phaedo_linguistic_profile": {
+    "messageCount": 64,
+    "avgWordCount": 28,
+    "imperativeRate": 0.18,
+    "platformDistribution": {
+      "Claude": 9,
+      "ChatGPT": 3
+    }
+  },
+  "phaedo_session_metrics": {
+    "sessionCount": 6,
+    "avgMessagesPerSession": 8
+  }
+}

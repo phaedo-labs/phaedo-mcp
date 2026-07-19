@@ -1,0 +1,9 @@
+node_modules/
+mcp/vendor/
+.remember/
+mcp/pairing.json
+mcp/fingerprint.json
+mcp/identity.json
+mcp/consult-policies.json
+*.tgz
+.DS_Store

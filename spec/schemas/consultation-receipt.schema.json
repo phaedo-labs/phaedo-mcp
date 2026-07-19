@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getphaedo.com/spec/consultation-receipt.schema.json",
+  "title": "Phaedo Consultation Receipt",
+  "description": "One entry in the encrypted, append-only, vault-held record of resolved consultations (Phaedo Protocol v0.1 §10.6). Receipts NEVER leave the device — this schema documents the at-rest plaintext shape inside the phaedo:receipts:enc:v0.1 envelope, not a wire artifact. Captures the request descriptor and the response signal fields only; never layer content or the projection.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["receipt_id", "created_at", "via", "agent_id", "request", "response", "user_action"],
+  "properties": {
+    "receipt_id": { "type": "string", "description": "UUID v4. Stable identifier; the handle for the user_action update." },
+    "created_at": { "type": "string", "description": "RFC 3339 UTC timestamp of resolution." },
+    "via": {
+      "enum": ["phaedo_consult", "phaedo_check_authorization"],
+      "description": "Which tool resolved it: a full consultation, or a matched deterministic pre-flight (only MATCHED pre-flights produce receipts)."
+    },
+    "agent_id": { "type": ["string", "null"], "description": "The requesting agent's self-identifier, when provided." },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["consultation_type", "action_descriptor"],
+      "properties": {
+        "consultation_type": { "enum": ["action_approval", "voice_draft", "domain_risk_check", "escalation_default"] },
+        "action_descriptor": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "domain": { "type": ["string", "null"] },
+            "reversible": { "type": ["boolean", "null"] },
+            "magnitude": { "type": ["string", "null"] },
+            "amount": { "type": ["number", "null"] },
+            "summary": { "type": ["string", "null"], "maxLength": 500, "description": "The agent's action description (agent-provided text, not fingerprint content)." }
+          }
+        }
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signal", "confidence", "deference_level"],
+      "properties": {
+        "signal": { "type": ["string", "null"] },
+        "confidence": { "type": ["number", "null"] },
+        "deference_level": { "type": ["string", "null"] }
+      }
+    },
+    "drivers": {
+      "type": "array",
+      "description": "OPTIONAL provenance (§10.4-safe — LOCAL audit only, never in the consult response): the Decision&Risk cues that drove an inferred consultation. Present for inferred `phaedo_consult` resolutions with at least one fired cue; absent for deterministic pre-flights and abstains. Carries direction/confidence/evidence-basis, NOT layer text.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["cue", "confidence", "basis"],
+        "properties": {
+          "cue": { "type": ["string", "null"], "description": "Cue key (e.g. irreversibleCaution, ambiguityPosture)." },
+          "lean": { "type": "number", "description": "Signed direction the cue pushed the score (scalar cues)." },
+          "value": { "type": "string", "description": "Resolved value, for categorical cues (e.g. ask_first)." },
+          "confidence": { "type": ["number", "null"], "description": "Per-cue confidence [0,1]." },
+          "basis": { "type": ["string", "null"], "description": "Evidence basis: observed | corroborated | self_reported | text_scan." },
+          "origin": { "enum": ["self", "delegation"], "description": "OPTIONAL — the act-as-me channel: `self` (default) = the driving cue came from the subject's own behavior; `delegation` = from the subject correcting an agent acting on their behalf (a delegation-origin signal won this dimension). Lets the subject's local audit see WHEN a consult was driven by an act-as-me preference rather than act-for-me." }
+        }
+      }
+    },
+    "user_action": {
+      "enum": ["approved", "rejected", "modified", "unknown", null],
+      "description": "null at write time. The ONLY field mutable after write — set when override data exists (what the subject actually did with the agent's action). The seed of agreement tracking (M5)."
+    }
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "category": "TC-CONS",
+  "describes": "Phaedo Protocol §10 consultation: deterministic pure-resolver output for a fixed (fingerprint, request). vault \"sample-fingerprint\" = mcp/sample-fingerprint.json; \"empty-coverage\" = a fingerprint with no relevant signals (must abstain). Locks the resolver signal + deference_level; the §10.4 boundary holds (no layer content).",
+  "vectors": [
+    {
+      "test_id": "T-PHAEDO-CONS-0001",
+      "description": "action_approval on an irreversible high-magnitude financial action",
+      "vault": "sample-fingerprint",
+      "request": {
+        "consultation_type": "action_approval",
+        "action_descriptor": {
+          "domain": "financial",
+          "reversible": false,
+          "magnitude": "high",
+          "summary": "Approve a large vendor payment."
+        }
+      },
+      "expected": {
+        "signal": "clarify",
+        "deference_level": "high"
+      }
+    },
+    {
+      "test_id": "T-PHAEDO-CONS-0002",
+      "description": "domain_risk_check in a known domain",
+      "vault": "sample-fingerprint",
+      "request": {
+        "consultation_type": "domain_risk_check",
+        "action_descriptor": {
+          "domain": "writing",
+          "reversible": true,
+          "magnitude": "low"
+        }
+      },
+      "expected": {
+        "signal": "clarify",
+        "deference_level": "high"
+      }
+    },
+    {
+      "test_id": "T-PHAEDO-CONS-0003",
+      "description": "abstain — zero-coverage fingerprint yields insufficient_signal",
+      "vault": "empty-coverage",
+      "request": {
+        "consultation_type": "action_approval",
+        "action_descriptor": {
+          "domain": "aerospace",
+          "reversible": false,
+          "magnitude": "high"
+        }
+      },
+      "expected": {
+        "signal": "insufficient_signal",
+        "deference_level": "low"
+      }
+    }
+  ]
+}

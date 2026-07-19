@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getphaedo.com/spec/vault-data.schema.json",
+  "title": "Phaedo Vault Data (vd) — INFORMATIVE",
+  "description": "The decrypted runtime payload the reference consumers share: renderContextBlock(vd) for injection (§9) and resolveConsultationCore(vd, request) for consultation (§10). INFORMATIVE, not a wire artifact — the normative artifacts are the §4 fingerprint and §5 user configuration carried inside it (Phaedo Protocol Appendix C). All keys optional: an empty object is a legitimate empty vault (nothing to render), distinct from a type breach. Runtime guards: context-block.js validateVaultData and mcp/consult-core.js validateVaultShape (kept in agreement by scripts/test_context_block_snapshots.mjs).",
+  "type": "object",
+  "properties": {
+    "phaedo_fingerprint": {
+      "$ref": "https://getphaedo.com/spec/fingerprint.schema.json#/properties/phaedo_fingerprint",
+      "description": "The §4 fingerprint document (8 layers, signals, optional consult_policies §10.5)."
+    },
+    "phaedo_behavioral_signals": {
+      "type": "object",
+      "description": "Cross-session accumulated behavioral signals feeding the layers (per-layer map; producer-internal shape in v0.1)."
+    },
+    "phaedo_linguistic_profile": {
+      "type": "object",
+      "description": "Surface/style features used by injection synthesis (e.g. messageCount, avgWordCount, imperativeRate, platformDistribution). No conversation content."
+    },
+    "phaedo_session_metrics": {
+      "type": "object",
+      "description": "Session counters / persona-strength inputs (e.g. sessionCount, avgMessagesPerSession). No conversation content."
+    }
+  }
+}

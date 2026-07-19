@@ -1,0 +1,18 @@
+{
+  "_comment": "Intentionally NON-CONFORMING fixture for the phaedo-validate CLI / conformance tie. Errors: missing required phaedo_protocol_version + subject_id + schema_revision; duplicate (tone_register, positive) signal; non-enum polarity 'sideways'. Seed of the P1.3 good/bad corpus.",
+  "phaedo_fingerprint": {
+    "fingerprint_id": "bad-0000-0000-0000-000000000000",
+    "updated_at": "2026-06-15T00:00:00.000Z",
+    "persona_strength": 0.5,
+    "layers": {
+      "surface": {
+        "label": "Communication style",
+        "signals": [
+          { "field": "tone_register", "polarity": "positive", "value": "casual" },
+          { "field": "tone_register", "polarity": "positive", "value": "casual" },
+          { "field": "directness", "polarity": "sideways", "value": "high" }
+        ]
+      }
+    }
+  }
+}

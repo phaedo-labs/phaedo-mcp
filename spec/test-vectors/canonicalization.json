@@ -1,0 +1,93 @@
+{
+  "category": "TC-CANON",
+  "describes": "Phaedo Protocol §6 canonical serialization, as implemented by Phaedo.Envelope.canonicalStringify (the v0.1 metadata-AAD canonicalizer).",
+  "note": "v0.1 SUBSET of RFC 8785: object-key ordering (UTF-16 code units), recursive application, array-order preservation, UTF-8, and no insignificant whitespace all match RFC 8785. NOT yet covered: RFC 8785 number canonicalization for exponent/edge-case magnitudes (current impl defers number formatting to JSON.stringify) and minimal control-char escaping. These land with §8.3 signing. Inputs here use only the value types v0.1 artifacts/metadata contain, where the subset is byte-equal to RFC 8785.",
+  "vectors": [
+    {
+      "test_id": "T-PHAEDO-CANON-0001",
+      "description": "Object keys sorted by UTF-16 code unit (RFC 8785 §3.2.3), no whitespace",
+      "input": {
+        "b": 1,
+        "a": 2,
+        "c": 3
+      },
+      "expected_canonical": "{\"a\":2,\"b\":1,\"c\":3}",
+      "expected_sha256": "e145110e712e3ed0a6b233551b27a90aa39b4c93ed67e111ba2002d16e5ed1fa"
+    },
+    {
+      "test_id": "T-PHAEDO-CANON-0002",
+      "description": "Nested object key sorting is recursive",
+      "input": {
+        "z": {
+          "y": 1,
+          "x": 2
+        },
+        "a": [
+          3,
+          2,
+          1
+        ]
+      },
+      "expected_canonical": "{\"a\":[3,2,1],\"z\":{\"x\":2,\"y\":1}}",
+      "expected_sha256": "00284ff64ddee4ecd1b3c76fde9524200571a90c53d8c79e5e36e08d8d1d7d1c"
+    },
+    {
+      "test_id": "T-PHAEDO-CANON-0003",
+      "description": "Array element order is preserved (not sorted)",
+      "input": [
+        3,
+        1,
+        2,
+        "b",
+        "a"
+      ],
+      "expected_canonical": "[3,1,2,\"b\",\"a\"]",
+      "expected_sha256": "50300122e6fdfef79ecb31e0447247453c80bc9fd0c146af68c052638f73572c"
+    },
+    {
+      "test_id": "T-PHAEDO-CANON-0004",
+      "description": "Scalars: string, integer, decimal, boolean, null",
+      "input": {
+        "s": "hi",
+        "i": 42,
+        "d": 0.5,
+        "t": true,
+        "f": false,
+        "n": null
+      },
+      "expected_canonical": "{\"d\":0.5,\"f\":false,\"i\":42,\"n\":null,\"s\":\"hi\",\"t\":true}",
+      "expected_sha256": "08df933f1830b61692840b9e064b34c4c9b25d1d5cc93dbaef8c2744bcfbf3dd"
+    },
+    {
+      "test_id": "T-PHAEDO-CANON-0005",
+      "description": "Unicode string preserved as UTF-8 (no ASCII-escaping)",
+      "input": {
+        "msg": "café — déjà",
+        "emoji": "🜂"
+      },
+      "expected_canonical": "{\"emoji\":\"🜂\",\"msg\":\"café — déjà\"}",
+      "expected_sha256": "37ea88c9e4ff389aa1c2edc5cde48436aa0cd750b23b9b8cad2520c2f5a8bf03"
+    },
+    {
+      "test_id": "T-PHAEDO-CANON-0006",
+      "description": "Empty object and empty array",
+      "input": {
+        "o": {},
+        "a": []
+      },
+      "expected_canonical": "{\"a\":[],\"o\":{}}",
+      "expected_sha256": "9bee7ebfc94b459dacb8cbc72cb2900e61f0aa42189df18329f84f92568f4f89"
+    },
+    {
+      "test_id": "T-PHAEDO-CANON-0007",
+      "description": "Realistic envelope metadata (the v0.1 AAD path)",
+      "input": {
+        "artifact_kind": "fingerprint",
+        "fingerprint_id": "f1b9c4e2-7d3a-4e8b-9c0f-2a1b3c4d5e6f",
+        "created_at": "2026-04-28T17:00:00Z"
+      },
+      "expected_canonical": "{\"artifact_kind\":\"fingerprint\",\"created_at\":\"2026-04-28T17:00:00Z\",\"fingerprint_id\":\"f1b9c4e2-7d3a-4e8b-9c0f-2a1b3c4d5e6f\"}",
+      "expected_sha256": "33506f29240eb3a2b675bc9556a76e14774597349743acf1558f3fc437b2fd0f"
+    }
+  ]
+}

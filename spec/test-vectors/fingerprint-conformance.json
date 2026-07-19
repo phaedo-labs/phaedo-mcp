@@ -1,0 +1,429 @@
+{
+  "category": "TC-FP-CONFORMANCE",
+  "describes": "Good/bad fingerprint documents for the §4 schema, checked by spec/validate-fingerprint.mjs (validateVaultData over the Appendix-C wrapper). Each case states the expected verdict; bad cases name substrings that MUST appear in the reported errors. This is the §12 good/bad corpus an external producer self-tests against.",
+  "vectors": [
+    {
+      "test_id": "T-PHAEDO-FP-GOOD-0001",
+      "description": "Empty vault — no phaedo_fingerprint is a legitimate fresh user, not a breach",
+      "doc": {},
+      "expect": "pass"
+    },
+    {
+      "test_id": "T-PHAEDO-FP-GOOD-0002",
+      "description": "Minimal conforming fingerprint: required §4.1 identity fields + empty layers",
+      "doc": {
+        "phaedo_fingerprint": {
+          "phaedo_protocol_version": "0.1",
+          "subject_id": "subj-1",
+          "schema_revision": 1,
+          "layers": {}
+        }
+      },
+      "expect": "pass"
+    },
+    {
+      "test_id": "T-PHAEDO-FP-GOOD-0003",
+      "description": "Conforming fingerprint with a typed, bounded, unique signal set",
+      "doc": {
+        "phaedo_fingerprint": {
+          "phaedo_protocol_version": "0.1",
+          "subject_id": "subj-2",
+          "schema_revision": 1,
+          "persona_strength": 0.62,
+          "layers": {
+            "surface": {
+              "label": "Communication style",
+              "confidence": 0.7,
+              "signals": [
+                {
+                  "field": "tone_register",
+                  "polarity": "positive",
+                  "value": "casual",
+                  "confidence": 0.7,
+                  "evidence_basis": "observed"
+                },
+                {
+                  "field": "directness",
+                  "polarity": "positive",
+                  "value": "high",
+                  "confidence": 0.6
+                }
+              ]
+            },
+            "decision_and_risk": {
+              "confidence": 0.5,
+              "signals": [
+                {
+                  "field": "evidence_threshold",
+                  "polarity": "positive",
+                  "value": 0.8,
+                  "confidence": 0.6,
+                  "domain": "financial"
+                },
+                {
+                  "field": "evidence_threshold",
+                  "polarity": "positive",
+                  "value": 0.4,
+                  "confidence": 0.6,
+                  "domain": "writing"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "expect": "pass"
+    },
+    {
+      "test_id": "T-PHAEDO-FP-BAD-0001",
+      "description": "Missing the required §4.1 protocol-identity fields",
+      "doc": {
+        "phaedo_fingerprint": {
+          "layers": {}
+        }
+      },
+      "expect": "fail",
+      "expect_errors_contain": [
+        "phaedo_protocol_version",
+        "subject_id",
+        "schema_revision"
+      ]
+    },
+    {
+      "test_id": "T-PHAEDO-FP-BAD-0002",
+      "description": "Duplicate signal — same (field, polarity, domain) appears twice",
+      "doc": {
+        "phaedo_fingerprint": {
+          "phaedo_protocol_version": "0.1",
+          "subject_id": "s",
+          "schema_revision": 1,
+          "layers": {
+            "decision_and_risk": {
+              "signals": [
+                {
+                  "field": "options_vs_recommendation",
+                  "polarity": "positive",
+                  "value": "option_set"
+                },
+                {
+                  "field": "options_vs_recommendation",
+                  "polarity": "positive",
+                  "value": "option_set"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "expect": "fail",
+      "expect_errors_contain": [
+        "duplicate"
+      ]
+    },
+    {
+      "test_id": "T-PHAEDO-FP-BAD-0003",
+      "description": "Non-enum polarity",
+      "doc": {
+        "phaedo_fingerprint": {
+          "phaedo_protocol_version": "0.1",
+          "subject_id": "s",
+          "schema_revision": 1,
+          "layers": {
+            "surface": {
+              "signals": [
+                {
+                  "field": "directness",
+                  "polarity": "sideways",
+                  "value": "high"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "expect": "fail",
+      "expect_errors_contain": [
+        "polarity"
+      ]
+    },
+    {
+      "test_id": "T-PHAEDO-FP-BAD-0004",
+      "description": "Signal confidence out of [0,1]",
+      "doc": {
+        "phaedo_fingerprint": {
+          "phaedo_protocol_version": "0.1",
+          "subject_id": "s",
+          "schema_revision": 1,
+          "layers": {
+            "surface": {
+              "signals": [
+                {
+                  "field": "directness",
+                  "polarity": "positive",
+                  "value": "high",
+                  "confidence": 1.7
+                }
+              ]
+            }
+          }
+        }
+      },
+      "expect": "fail",
+      "expect_errors_contain": [
+        "confidence out of [0,1]"
+      ]
+    },
+    {
+      "test_id": "T-PHAEDO-FP-BAD-0005",
+      "description": "Signal missing the required value",
+      "doc": {
+        "phaedo_fingerprint": {
+          "phaedo_protocol_version": "0.1",
+          "subject_id": "s",
+          "schema_revision": 1,
+          "layers": {
+            "surface": {
+              "signals": [
+                {
+                  "field": "directness",
+                  "polarity": "positive"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "expect": "fail",
+      "expect_errors_contain": [
+        "missing value"
+      ]
+    },
+    {
+      "test_id": "T-PHAEDO-FP-BAD-0006",
+      "description": "persona_strength out of [0,1]",
+      "doc": {
+        "phaedo_fingerprint": {
+          "phaedo_protocol_version": "0.1",
+          "subject_id": "s",
+          "schema_revision": 1,
+          "persona_strength": 2,
+          "layers": {}
+        }
+      },
+      "expect": "fail",
+      "expect_errors_contain": [
+        "persona_strength"
+      ]
+    },
+    {
+      "test_id": "T-PHAEDO-FP-BAD-0007",
+      "description": "layers is the wrong type",
+      "doc": {
+        "phaedo_fingerprint": {
+          "phaedo_protocol_version": "0.1",
+          "subject_id": "s",
+          "schema_revision": 1,
+          "layers": "nope"
+        }
+      },
+      "expect": "fail",
+      "expect_errors_contain": [
+        "layers must be an object"
+      ]
+    },
+    {
+      "test_id": "T-PHAEDO-FP-BAD-0008",
+      "description": "Episodic content in a behavioral layer — a 'principle' that is actually a fact about a life (a domain name). §4.6 bars it.",
+      "doc": {
+        "phaedo_fingerprint": {
+          "phaedo_protocol_version": "0.1",
+          "subject_id": "s",
+          "schema_revision": 1,
+          "layers": {
+            "big_picture": {
+              "signals": [
+                {
+                  "field": "stable_principles",
+                  "polarity": "positive",
+                  "value": "Values the canonical domain name (getphaedo.com)"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "expect": "fail",
+      "expect_errors_contain": [
+        "episodic content"
+      ]
+    },
+    {
+      "test_id": "T-PHAEDO-FP-GOOD-0004",
+      "description": "Clean layer summary (one resolved value per dimension, human-readable, no episodic facts) conforms.",
+      "doc": {
+        "phaedo_fingerprint": {
+          "phaedo_protocol_version": "0.1",
+          "subject_id": "s",
+          "schema_revision": 1,
+          "layers": {
+            "decision_and_risk": {
+              "summary": "- Speed vs quality: medium\n- Evidence bar: high"
+            }
+          }
+        }
+      },
+      "expect": "pass"
+    },
+    {
+      "test_id": "T-PHAEDO-FP-BAD-0009",
+      "description": "Episodic fact (a domain name) leaked into a behavioral layer SUMMARY, not just a signal value. §4.6 bars it; the rendered projection is what consumers inject.",
+      "doc": {
+        "phaedo_fingerprint": {
+          "phaedo_protocol_version": "0.1",
+          "subject_id": "s",
+          "schema_revision": 1,
+          "layers": {
+            "big_picture": {
+              "summary": "- Principles: Values the canonical domain name (getphaedo.com) and its importance"
+            }
+          }
+        }
+      },
+      "expect": "fail",
+      "expect_errors_contain": [
+        "summary",
+        "episodic"
+      ]
+    },
+    {
+      "test_id": "T-PHAEDO-FP-BAD-0010",
+      "description": "Duplicate dimension in a layer summary — the projection asserts two conflicting values for one dimension with no resolution.",
+      "doc": {
+        "phaedo_fingerprint": {
+          "phaedo_protocol_version": "0.1",
+          "subject_id": "s",
+          "schema_revision": 1,
+          "layers": {
+            "decision_and_risk": {
+              "summary": "- Speed vs quality: medium\n- Evidence bar: high\n- Speed vs quality: high"
+            }
+          }
+        }
+      },
+      "expect": "fail",
+      "expect_errors_contain": [
+        "repeats dimension"
+      ]
+    },
+    {
+      "test_id": "T-PHAEDO-FP-BAD-0011",
+      "description": "Opaque producer-internal code leaked into a summary value (the 's2 d' class) — an interchange format cannot ship values only the producer understands.",
+      "doc": {
+        "phaedo_fingerprint": {
+          "phaedo_protocol_version": "0.1",
+          "subject_id": "s",
+          "schema_revision": 1,
+          "layers": {
+            "surface": {
+              "summary": "- Tone: s2 d"
+            }
+          }
+        }
+      },
+      "expect": "fail",
+      "expect_errors_contain": [
+        "opaque"
+      ]
+    },
+    {
+      "test_id": "T-PHAEDO-FP-GOOD-0012",
+      "description": "§4.7 conflict_records resolution.by:'system' — a sustained behavioral override of a self-report, surfaced for review. Both sides carried (chosen_value + prior_value) so the subject can acknowledge or revert.",
+      "doc": {
+        "phaedo_fingerprint": {
+          "phaedo_protocol_version": "0.1",
+          "subject_id": "s",
+          "schema_revision": 1,
+          "layers": {
+            "surface": {
+              "signals": [
+                { "field": "response_length_pref", "polarity": "positive", "value": "short", "confidence": 0.85, "evidence_basis": "observed", "observation_count": 7 }
+              ]
+            }
+          },
+          "conflict_records": [
+            {
+              "conflict_id": "11111111-1111-4111-8111-111111111111",
+              "layer": "surface",
+              "field": "response_length_pref",
+              "status": "resolved",
+              "detected_at": "2026-06-29T00:00:00Z",
+              "last_seen": "2026-06-29T12:00:00Z",
+              "resolved_at": "2026-06-29T12:00:00Z",
+              "candidates": [
+                { "value": "thorough", "source": "questionnaire", "evidence_basis": "self_reported", "confidence": 0.7, "observation_count": 1, "last_observed": "2026-06-01T00:00:00Z" },
+                { "value": "short",    "source": "extraction",    "evidence_basis": "observed",      "confidence": 0.85, "observation_count": 7, "last_observed": "2026-06-29T00:00:00Z" }
+              ],
+              "resolution": { "chosen_value": "short", "prior_value": "thorough", "by": "system" }
+            }
+          ]
+        }
+      },
+      "expect": "pass"
+    },
+    {
+      "test_id": "T-PHAEDO-FP-GOOD-0013",
+      "description": "§4.7 conflict_records resolution.by:'user' after revert — carries ack_at + reverted_to so the audit trail shows when and to what the subject restored. Candidates carry both sides (self-report + observed) — a realistic shape a producer would actually emit (popup.js revertOverride / mobile revertOverride preserve them from the staged record).",
+      "doc": {
+        "phaedo_fingerprint": {
+          "phaedo_protocol_version": "0.1",
+          "subject_id": "s",
+          "schema_revision": 1,
+          "layers": { "surface": { "signals": [] } },
+          "conflict_records": [
+            {
+              "conflict_id": "22222222-2222-4222-8222-222222222222",
+              "layer": "surface",
+              "field": "response_length_pref",
+              "status": "resolved",
+              "detected_at": "2026-06-29T00:00:00Z",
+              "last_seen": "2026-06-29T12:00:00Z",
+              "resolved_at": "2026-06-29T12:00:00Z",
+              "candidates": [
+                { "value": "thorough", "source": "questionnaire", "evidence_basis": "self_reported", "confidence": 0.7, "observation_count": 1 },
+                { "value": "short", "source": "delta", "evidence_basis": "observed", "confidence": 0.75, "observation_count": 5, "last_observed": "2026-06-29T12:00:00Z" }
+              ],
+              "resolution": { "chosen_value": "short", "prior_value": "thorough", "by": "user", "ack_at": "2026-06-29T13:00:00Z", "reverted_to": "thorough" }
+            }
+          ]
+        }
+      },
+      "expect": "pass"
+    },
+    {
+      "test_id": "T-PHAEDO-FP-BAD-0014",
+      "description": "§4.7 conflict_records resolution.by:'oracle' — not in the enum. Authority on a conflict record can only be the subject ('user') or the producer's auto-resolution ('system').",
+      "doc": {
+        "phaedo_fingerprint": {
+          "phaedo_protocol_version": "0.1",
+          "subject_id": "s",
+          "schema_revision": 1,
+          "layers": { "surface": { "signals": [] } },
+          "conflict_records": [
+            {
+              "conflict_id": "33333333-3333-4333-8333-333333333333",
+              "layer": "surface",
+              "field": "response_length_pref",
+              "status": "resolved",
+              "candidates": [],
+              "resolution": { "chosen_value": "short", "by": "oracle" }
+            }
+          ]
+        }
+      },
+      "expect": "fail",
+      "expect_errors_contain": [
+        "by"
+      ]
+    }
+  ]
+}

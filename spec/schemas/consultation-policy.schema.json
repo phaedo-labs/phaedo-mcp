@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getphaedo.com/spec/consultation-policy.schema.json",
+  "title": "Phaedo Consultation Policy",
+  "description": "Subject-authored standing guardrails that OVERRIDE the inferred consultation signal (Phaedo Protocol v0.1 §10.5). DEPRECATED as a standalone array as of Proposal 0007: authored authorizations are now `standing_rules` entries with `kind:\"authorization\"` (the single authored home, fingerprint.schema.json). This schema is retained for (a) the back-compat read path — existing `phaedo_consult_policies` / `phaedo_fingerprint.consult_policies` documents stay valid and are still honored by the resolver — and (b) the `$defs.match` / `$defs.effect` subschemas shared by both `consult_policies.rules[]` and `standing_rules` (authorization variant). Removed in v0.2 with the §5 User Configuration migration.",
+  "type": "object",
+  "required": ["rules"],
+  "$defs": {
+    "match": {
+      "type": "object",
+      "description": "All present constraints must hold for the rule to apply. Shared by consult_policies.rules[] and standing_rules (kind:authorization).",
+      "properties": {
+        "domains": { "type": "array", "items": { "type": "string" }, "description": "Substring match (case-insensitive) on the action descriptor's domain." },
+        "magnitude_min": { "enum": ["low", "medium", "high"] },
+        "magnitude_max": { "enum": ["low", "medium", "high"] },
+        "reversible": { "type": "boolean" },
+        "amount_gt": { "type": "number", "description": "Numeric threshold: matches only when the action descriptor carries an `amount` strictly greater than this (e.g. escalate irreversible spend over 5000). No amount on the action → the threshold rule does not fire." }
+      }
+    },
+    "effect": {
+      "enum": ["escalate", "require_human", "decline", "autoproceed", "bias_cautious", "bias_bold"],
+      "description": "Force effects (escalate/require_human→escalate, decline, autoproceed→proceed) are authored authorizations: they set the signal at confidence:1.0, deference:high. bias_* nudges one step along proceed→proceed_with_note→clarify→escalate (keeps the inferred confidence)."
+    }
+  },
+  "properties": {
+    "version": { "type": "string" },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["effect"],
+        "properties": {
+          "id": { "type": "string" },
+          "match": { "$ref": "#/$defs/match" },
+          "effect": { "$ref": "#/$defs/effect" },
+          "note": { "type": "string", "description": "Surfaced to the agent as the rationale_hint." },
+          "expires_at": { "type": "string", "description": "OPTIONAL RFC 3339. Conditional/revocable authority (§10.5): once this instant passes the authorization is LAPSED and no longer applies (a time-bound, identity-free form of revocation). ENFORCED by the reference resolver — the direction is always authority-narrowing, so it is fail-safe." },
+          "agents": { "type": "array", "items": { "type": "string" }, "description": "OPTIONAL, RESERVED — scope this authorization to specific agent identities. NOT yet enforced: scoping on a self-asserted agent_id would be false security, so enforcement waits for an authenticated agent identity (build-later). Parsed but inert today." }
+        }
+      }
+    }
+  }
+}

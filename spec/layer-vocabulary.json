@@ -1,0 +1,63 @@
+{
+  "_note": "NORMATIVE-REFERENCE per-layer signal field vocabulary (Phaedo Protocol §4.2, resolving open question 13 for all eight layers — the per-signal SHAPE is fingerprint.schema.json#/$defs/signal, generalizing §4.2.7; the per-layer FIELD set is here). Generated from the reference extraction catalog (extraction/catalog.js) and kept in sync by spec/test-schemas.mjs. All eight layers are BEHAVIORAL/persona layers: per §4.6 they admit structured signals only, never episodic content. Questionnaire-projected fields (e.g. collaboration_drains/collaboration_energizers) are additionally valid; an unknown field is not a conformance failure (the vocabulary evolves), but episodic content IS (§4.6).",
+  "behavioral_layers": [
+    "surface",
+    "behavioral",
+    "creative",
+    "domain_and_expertise",
+    "temporal_and_context",
+    "collaboration_and_relationship",
+    "decision_and_risk",
+    "big_picture"
+  ],
+  "layers": {
+    "surface": [
+      "directness",
+      "formatting_prefs",
+      "jargon_tolerance",
+      "pet_peeves",
+      "response_length_pref",
+      "tone_register"
+    ],
+    "behavioral": [
+      "ambiguity_response",
+      "autonomy_pref",
+      "detail_vs_principle",
+      "iteration_style",
+      "reasoning_visibility",
+      "scope_discipline"
+    ],
+    "creative": [
+      "mental_model_inventory",
+      "problem_solving_move",
+      "quality_word"
+    ],
+    "domain_and_expertise": [
+      "active_learning_areas",
+      "domain_depth_pref",
+      "domain_vocabulary",
+      "expertise_level",
+      "primary_expertise"
+    ],
+    "temporal_and_context": [
+      "early_project_mode",
+      "urgency_baseline",
+      "working_mode"
+    ],
+    "collaboration_and_relationship": [
+      "audience_adaptation",
+      "disagreement_style",
+      "feedback_pref"
+    ],
+    "decision_and_risk": [
+      "ambiguity_posture",
+      "evidence_threshold",
+      "options_vs_recommendation",
+      "speed_vs_quality"
+    ],
+    "big_picture": [
+      "process_narration_pref",
+      "stable_principles"
+    ]
+  }
+}

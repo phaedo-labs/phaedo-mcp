@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/phaedo-labs/phaedo-mcp/blob/main/SECURITY.md
+    about: Please do NOT open an issue — report privately per the security policy.

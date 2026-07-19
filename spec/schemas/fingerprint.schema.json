@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getphaedo.com/spec/fingerprint.schema.json",
+  "title": "Phaedo Fingerprint",
+  "description": "A structured, layered model of how a subject thinks, communicates, decides, and works (Phaedo Protocol v0.1 §4). The decrypted vault payload; the ciphertext envelope (§7) is the only form transported. Tightened (2026-06-15) to the §4.1/§4.2 prose AND to what the reference producer actually emits (extraction/fingerprint-update.js + migration.js + the assembled fingerprint): the layer envelope and per-signal shape are typed and bounded, and the §4.1 protocol-identity fields (phaedo_protocol_version, subject_id, schema_revision) are now REQUIRED — the reference producer stamps them via migration.js stampProtocolFields. The producer↔schema tie is spec/test-schemas.mjs (validates the shipped sample AND live extraction output); signal uniqueness per (field, polarity, domain) — which JSON Schema cannot express across array items — is enforced there too.",
+  "type": "object",
+  "required": ["phaedo_fingerprint"],
+  "properties": {
+    "phaedo_fingerprint": {
+      "type": "object",
+      "description": "The §4.1 fingerprint document. vault-data.schema.json $refs this sub-schema as the runtime payload's fingerprint.",
+      "required": ["layers", "phaedo_protocol_version", "subject_id", "schema_revision"],
+      "properties": {
+        "phaedo_protocol_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+",
+          "description": "Protocol version (MAJOR.MINOR), §4.1. Emitted by the reference producer (migration.js stampProtocolFields)."
+        },
+        "fingerprint_id": { "type": "string", "description": "Stable identifier for this fingerprint instance (§4.1, UUID v4)." },
+        "subject_id": { "type": "string", "description": "Opaque, non-PII subject identifier (§4.1). A UUID minted once per fingerprint by the reference producer; never derived from PII." },
+        "created_at": { "type": "string", "description": "RFC 3339 creation timestamp (§4.1)." },
+        "updated_at": { "type": "string", "description": "RFC 3339 timestamp of the most recent layer update (§4.1)." },
+        "persona_strength": { "type": "number", "minimum": 0, "maximum": 1, "description": "Producer confidence the fingerprint is a useful match (§4.4)." },
+        "schema_revision": { "type": "integer", "minimum": 0, "description": "Layer-schema revision counter (§4.1). Emitted by the reference producer (migration.js stampProtocolFields)." },
+        "layers": {
+          "type": "object",
+          "description": "The eight canonical layers: surface, behavioral, creative, domain_and_expertise, temporal_and_context, collaboration_and_relationship, decision_and_risk, big_picture. Each is independently selectable and encryptable. Any combination MAY be absent (§4.2).",
+          "additionalProperties": { "$ref": "#/$defs/layer" }
+        },
+        "consult_policies": {
+          "description": "DEPRECATED (Proposal 0007) — superseded by `standing_rules` (kind:authorization). Retained as a back-compat read path; existing documents stay valid and the resolver still honors them. See consultation-policy.schema.json.",
+          "$ref": "consultation-policy.schema.json"
+        },
+        "standing_rules": {
+          "type": "array",
+          "description": "Subject-AUTHORED standing instructions (§5.2 shape) — the single home for authored rules (Proposal 0007), carried on the fingerprint as the v0.1 A-home (supersedes the standalone consult_policies array; migrates to the §5 User Configuration sibling in v0.2). Authored content: stated once, no producer confidence score, applied VERBATIM, never inferred. The extraction pipeline MUST NOT write this array (locked by scripts/test_standing_rules_invariant.mjs). `kind:\"instruction\"` is a verbatim rule, optionally bound to a Decision&Risk dimension via `decision` (which marks that dimension authored-canonical in §4.7 resolution). `kind:\"authorization\"` is a deterministic §10.5 gate (match/effect, shared $defs); if it also carries `text` it injects too.",
+          "items": {
+            "type": "object",
+            "required": ["kind"],
+            "properties": {
+              "instruction_id": { "type": "string", "description": "Stable id (UUID v4)." },
+              "kind": { "enum": ["instruction", "authorization"], "description": "Variant discriminator (Proposal 0003 model)." },
+              "text": { "type": "string", "maxLength": 1000, "description": "Verbatim rule (§5.2). UTF-8, NFC. Injected as-is — MUST NOT be summarized. Required for instruction; optional for authorization (present → the gate also injects)." },
+              "exception": { "type": "string", "maxLength": 1000, "description": "OPTIONAL boundary, rendered '(Exception: …)'." },
+              "scope": { "enum": ["global", "domain", "task"], "description": "§5.2 scope. v0.1: only `global` normative; use `decision.domain` / `match.domains` for v0.1 domain scoping." },
+              "priority": { "type": "integer", "description": "§5.2 ordering hint; lower injects first. Ties broken by created_at." },
+              "decision": {
+                "type": "object",
+                "description": "OPTIONAL (instruction). Binding to one Decision&Risk dimension; present → the projection/consultation treats it authored-canonical (§4.7 'authored overrides inferred').",
+                "required": ["dimension"],
+                "properties": {
+                  "dimension": { "type": "string", "description": "evidence_threshold | ambiguity_posture | options_vs_recommendation | speed_vs_quality | reversible_vs_irreversible (spec/layer-vocabulary.json)." },
+                  "polarity": { "enum": ["positive", "negative"], "description": "§4.3. A negative authored rule is canonical over a contradicting inferred positive." },
+                  "value": { "type": "string", "description": "OPTIONAL catalog value token for the bound dimension (e.g. `quality`, `ask`, `more_cautious`). Carried when the rule came from a selected template (`source:\"interview_template\"`); lets a future resolver bind a precise value rather than just a cautious nudge. Free-text / edited rules omit it." },
+                  "domain": { "type": "string", "description": "OPTIONAL domain scope, same case-insensitive substring namespace as action_descriptor.domain / match.domains." },
+                  "origin": { "enum": ["self", "delegation"], "description": "OPTIONAL — the act-for-me vs act-as-me channel (mirrors signals[].origin). Absent/`self` = how the subject decides themselves. `delegation` = how they want an agent to act on their behalf — carried when the rule was endorsed from a delegation-promoted suggestion (`source:\"delegation_promotion\"`), so the resolver/projection treat it as the act-as-me preference for that dimension." }
+                }
+              },
+              "match": { "$ref": "consultation-policy.schema.json#/$defs/match", "description": "AUTHORIZATION only — §10.5 matcher. Optional (matchless = matches all)." },
+              "effect": { "$ref": "consultation-policy.schema.json#/$defs/effect", "description": "AUTHORIZATION only — §10.5 effect. Required when kind=authorization." },
+              "note": { "type": "string", "description": "AUTHORIZATION only — resolver rationale_hint source (back-compat with consult_policies.note)." },
+              "expires_at": { "type": "string", "description": "AUTHORIZATION only — OPTIONAL RFC 3339. Conditional/revocable authority (§10.5): the authorization lapses (stops applying) once this instant passes. ENFORCED (authority-narrowing, fail-safe)." },
+              "agents": { "type": "array", "items": { "type": "string" }, "description": "AUTHORIZATION only — OPTIONAL, RESERVED. Scope to specific agent identities; NOT yet enforced (awaits authenticated agent identity — a self-asserted agent_id would be false security)." },
+              "source": { "enum": ["interview", "interview_template", "delta_promotion", "delegation_promotion"], "description": "OPTIONAL provenance: how the rule was authored — hand-written in onboarding (`interview`), endorsed from a selected seed template in onboarding (`interview_template`), by endorsing a delta-promoted inferred-pattern suggestion (`delta_promotion`), or by endorsing a delegation-promoted suggestion built from the subject's consult override history (`delegation_promotion`, an act-as-me rule). All are authored: endorsement is the write." },
+              "created_at": { "type": "string", "description": "RFC 3339." },
+              "updated_at": { "type": "string", "description": "RFC 3339." }
+            },
+            "allOf": [
+              { "if": { "properties": { "kind": { "const": "instruction" } } }, "then": { "required": ["text"] } },
+              { "if": { "properties": { "kind": { "const": "authorization" } } }, "then": { "required": ["effect"] } }
+            ]
+          }
+        },
+        "suggested_rules": {
+          "type": "array",
+          "description": "Delta-promotion STAGING queue (Proposal 0007 §E) — NOT authored content. When the extraction engine's inferred Decision&Risk signals show a pattern recurring (observed/corroborated, observation_count ≥ floor) that is not already an authored rule, the producer MAY stage a `suggested` candidate here for the subject to review. This is the one place the producer writes a rule-shaped object — and it is explicitly a *proposal*, never injected and never consulted. Only the subject's endorsement (rule-review.js `endorseSuggestion`) turns a suggestion into a `standing_rules` entry; that endorsement is the authored write. A rejected suggestion stays here with `status:\"dismissed\"` so it is not re-proposed.",
+          "items": {
+            "type": "object",
+            "required": ["status", "decision"],
+            "properties": {
+              "suggestion_id": { "type": "string", "description": "Stable id (UUID v4)." },
+              "status": { "enum": ["suggested", "dismissed"], "description": "`suggested` awaits the subject; `dismissed` was rejected (kept for audit + to suppress re-proposal)." },
+              "source": { "enum": ["delta_promotion", "delegation_promotion"], "description": "How the suggestion was produced: `delta_promotion` = the extraction engine staged an established INFERRED Decision&Risk pattern (Proposal 0007 §E); `delegation_promotion` = the MCP server staged an established pattern from the subject's consult OVERRIDE history (an act-as-me suggestion — `decision.origin` is `delegation`)." },
+              "proposed_text": { "type": "string", "maxLength": 1000, "description": "A first-person candidate rule the review UI shows; the subject edits it before endorsing." },
+              "decision": {
+                "type": "object",
+                "required": ["dimension"],
+                "description": "The Decision&Risk dimension the recurring signal sits on (becomes the endorsed rule's binding).",
+                "properties": {
+                  "dimension": { "type": "string" },
+                  "polarity": { "enum": ["positive", "negative"] },
+                  "domain": { "type": "string" },
+                  "origin": { "enum": ["self", "delegation"], "description": "OPTIONAL — `delegation` for a delegation-promoted suggestion, so endorsing it authors an act-as-me standing rule (`decision.origin:\"delegation\"`)." }
+                }
+              },
+              "evidence": {
+                "type": "object",
+                "description": "The delta cluster the suggestion rests on — provenance, never injected.",
+                "properties": {
+                  "observation_count": { "type": "integer", "minimum": 0 },
+                  "last_observed": { "type": "string" },
+                  "evidence_basis": { "type": "string" },
+                  "value": {},
+                  "signal_id": { "type": "string" }
+                }
+              },
+              "created": { "type": "string", "description": "RFC 3339." }
+            }
+          }
+        },
+        "conflict_records": {
+          "type": "array",
+          "description": "§4.7 conflict STAGING queue — NOT authored content, NOT injected, NOT consulted. When Loop-2 reconciliation detects a new `observed` value contradicting a `self_reported` one below the §4.7 evidence floor (a contradiction the confidence merge would otherwise collapse), the producer MAY stage it here for the subject to review. Derived from the evidence log; carries both sides' provenance. Auto-closes (`resolved`) once the inferred side crosses the floor; a subject's `dismissed` is sticky. Reference: extraction/reconcile.js `detectConflicts`/`reconcileFingerprint`.",
+          "items": {
+            "type": "object",
+            "required": ["conflict_id", "layer", "field", "status", "candidates"],
+            "properties": {
+              "conflict_id": { "type": "string", "description": "Stable id (UUID v4)." },
+              "layer": { "type": "string", "description": "Layer id the contradicted dimension sits on." },
+              "field": { "type": "string", "description": "The contradicted dimension." },
+              "domain": { "type": "string", "description": "OPTIONAL domain scope (per-domain signals are separate dimensions)." },
+              "status": { "enum": ["open", "resolved", "dismissed"], "description": "`open` awaits the subject; `resolved` = the inferred side later crossed the floor; `dismissed` = subject dismissed (sticky, not re-opened)." },
+              "detected_at": { "type": "string", "description": "RFC 3339 — first detection." },
+              "last_seen": { "type": "string", "description": "RFC 3339 — most recent pass that re-observed the contradiction." },
+              "resolved_at": { "type": "string", "description": "RFC 3339 — when it auto-closed." },
+              "candidates": {
+                "type": "array",
+                "description": "Both sides — the §4.7 provenance of the contradicting signals.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "value": {},
+                    "source": { "type": "string" },
+                    "evidence_basis": { "type": "string" },
+                    "confidence": { "type": "number" },
+                    "observation_count": { "type": "integer", "minimum": 0 },
+                    "last_observed": { "type": "string" }
+                  }
+                }
+              },
+              "resolution": {
+                "type": "object",
+                "description": "How the record was resolved. `by:'system'` = auto-resolution: sustained behavior crossed the §4.7 floor and overrode a self-report — surfaced for review (acknowledge/revert). `by:'user'` = subject acted (settle/acknowledge/revert).",
+                "properties": {
+                  "chosen_value": { "description": "The value the record resolved toward." },
+                  "prior_value": { "description": "On a system override, the self-reported value that was overridden — what revert restores to." },
+                  "by": { "enum": ["user", "system"] },
+                  "ack_at": { "type": "string", "description": "RFC 3339 — when the subject acted on a system override (acknowledge or revert)." },
+                  "reverted_to": { "description": "On revert, the value restored (== prior_value)." }
+                }
+              }
+            }
+          }
+        },
+        "extensions": {
+          "type": "object",
+          "description": "Producer-specific or experimental fields (§4.5). Keys SHOULD be producer-prefixed; consumers MUST ignore unknown keys."
+        }
+      }
+    },
+    "phaedo_consult_policies": {
+      "description": "Optional portable consultation guardrails — see consultation-policy.schema.json.",
+      "$ref": "consultation-policy.schema.json"
+    }
+  },
+  "$defs": {
+    "layer": {
+      "type": "object",
+      "description": "A §4.2 layer document. Shape varies by provenance: questionnaire-seeded layers carry label/responses/summary/signals; extraction-built layers carry layer_version/last_updated/confidence/signals/summary. All properties typed; none individually required so both forms validate.",
+      "properties": {
+        "label": { "type": "string" },
+        "layer_version": { "type": "string", "description": "Layer schema version, independent of the top-level protocol version (§4.2)." },
+        "last_updated": { "type": "string", "description": "RFC 3339 timestamp of the most recent observation that updated this layer (§4.2)." },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1, "description": "Producer confidence in this layer specifically (§4.2)." },
+        "summary": { "type": "string", "description": "Derived natural-language summary for injection (Loop-2 extraction; v0.1 limit 2000 chars)." },
+        "signals": { "type": "array", "items": { "$ref": "#/$defs/signal" } },
+        "responses": {
+          "type": "array",
+          "description": "Questionnaire answers ({ label?, question?, answer }).",
+          "items": { "type": "object", "properties": { "label": { "type": "string" }, "question": { "type": "string" }, "answer": { "type": "string" } } }
+        }
+      }
+    },
+    "signal": {
+      "type": "object",
+      "description": "A structured §4.2/§5.1 signal. field + polarity + value are the load-bearing trio every signal carries. The Decision & Risk layer additionally has a normative per-signal schema (decision-risk-signal.schema.json).",
+      "required": ["field", "polarity", "value"],
+      "properties": {
+        "signal_id": { "type": "string" },
+        "field": { "type": "string", "description": "The dimension/axis this signal describes." },
+        "dimension": { "type": "string", "description": "Proposal 0002 alias of field (the decision/style axis)." },
+        "polarity": { "enum": ["positive", "negative", "neutral"], "description": "Preference / anti-preference / neutral (§4.3)." },
+        "value": { "description": "Enum token, scalar, array, or number — resolved by the producer; consumers tolerate any JSON value." },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "source": { "type": "string", "description": "e.g. interview, questionnaire, extraction, delta, observation." },
+        "evidence_basis": { "enum": ["observed", "corroborated", "self_reported"], "description": "How the signal was learned (proposal 0002); consumers weigh observed/corroborated above self_reported." },
+        "origin": { "enum": ["self", "delegation"], "description": "OPTIONAL — the act-for-me vs act-as-me channel. Absent/`self` = learned from the subject's OWN behavior. `delegation` = learned from the subject CORRECTING an agent acting on their behalf — a distinct preference class (how they want work done FOR them, which need not match how they do it themselves). CONSUMED by the reference resolver as of v0.1.29: in a consultation (an agent about to act on the subject's behalf) a `delegation` signal OUTRANKS a `self` one for the same dimension. Producer EMISSION of `delegation`-origin signals (the capture/outcome source) is the next step; until then all signals are `self`." },
+        "domain": { "type": "string", "description": "Optional §4.2.7 domain scope (substring namespace shared with action_descriptor.domain)." },
+        "threshold": { "description": "Reserved (§4.2.7); not yet emitted." },
+        "observation_count": { "type": "integer", "minimum": 0 },
+        "session_refs": { "type": "array", "items": { "type": "string" } },
+        "last_observed": { "type": "string", "description": "RFC 3339 timestamp of the most recent observation." }
+      }
+    }
+  }
+}
