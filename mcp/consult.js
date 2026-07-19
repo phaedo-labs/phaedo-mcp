@@ -72,9 +72,24 @@ async function modelJudge(vd, n, opts) {
   if (!res.ok) throw new Error(`model endpoint ${res.status}`);
   const data = await res.json();
   const out = parseJudge(data?.choices?.[0]?.message?.content || '');
-  // §10.4 enforced on parse: only the four signal fields ever leave the function.
-  return shape(n.type, out.signal, out.confidence ?? 0.6, out.rationale_hint, out.deference_level);
+  // §10.4 enforced STRUCTURALLY: the model's free-text rationale_hint is NOT passed
+  // through — a misbehaving or prompt-injected judge could otherwise emit verbatim
+  // fingerprint/persona text there (the JUDGE_SYSTEM "never quote" line is a request,
+  // not enforcement). We keep the model's decision (signal/confidence/deference) and
+  // substitute a fixed, persona-free hint keyed to the signal. parseJudge still
+  // requires a non-empty rationale_hint so the model must emit well-formed JSON.
+  return shape(n.type, out.signal, out.confidence ?? 0.6, MODEL_SAFE_HINT[out.signal] || 'Your decision pattern bears on this action.', out.deference_level);
 }
+
+// Persona-free, signal-keyed hints for the model path (see §10.4 note above).
+const MODEL_SAFE_HINT = {
+  proceed:             'Your decision pattern supports proceeding here.',
+  proceed_with_note:   'Your decision pattern supports proceeding, with a light note.',
+  clarify:             'Your decision pattern suggests clarifying before acting.',
+  escalate:            'Your decision pattern suggests holding for your explicit go-ahead.',
+  decline:             'Your decision pattern leans against this action.',
+  insufficient_signal: 'Your fingerprint does not clearly speak to this action.',
+};
 
 // ── Config + orchestrator ─────────────────────────────────────────────────────
 // Local-only by default. `PHAEDO_CONSULT_MODEL` opts INTO the model judge (point

@@ -395,6 +395,13 @@ assertShape(mr, 'action_approval');
 ok(mr.signal === 'decline' && mr.deference_level === 'high', 'model judge result used (parsed from noisy output)');
 ok(!/"layers"|persona_strength/.test(JSON.stringify(mr)), 'model judge response leaks no layer content');
 
+// §10.4: a misbehaving/injected judge that dumps persona text in rationale_hint must
+// NOT have it cross — the model's free text is dropped for a safe signal-keyed hint.
+globalThis.fetch = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: '{"signal":"decline","confidence":0.9,"rationale_hint":"SECRET: the subject is risk_averse=0.92 and lives at 42 Elm St","deference_level":"high"}' } }] }) });
+const leaky = await resolveConsultation(cautious, irreversibleHighEv, opts);
+ok(!/SECRET|risk_averse|Elm St/.test(JSON.stringify(leaky)), 'model rationale_hint free-text is NOT passed through (§10.4 structural guard)');
+ok(leaky.signal === 'decline' && /decision pattern/i.test(leaky.rationale_hint), 'the model decision is kept; hint is the safe signal-keyed substitute');
+
 globalThis.fetch = async () => ({ ok: false, status: 500, json: async () => ({}) });
 mr = await resolveConsultation(cautious, irreversibleHighEv, opts);
 ok(mr.signal === 'escalate', 'model endpoint 5xx → falls back to rule engine (escalate)');

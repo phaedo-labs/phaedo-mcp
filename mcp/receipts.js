@@ -21,7 +21,7 @@
 // resolver core stays pure (no I/O). Receipt-write failure must never break the
 // consultation itself (the server warns on stderr and still answers).
 
-import { mkdir, readFile, writeFile, chmod } from 'fs/promises';
+import { mkdir, readFile, writeFile, chmod, rename } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { Phaedo, b64uEnc, b64uDec } from './lib/phaedo-crypto.js';
@@ -78,8 +78,26 @@ async function writeStore(stateDir, store, now) {
   });
   plaintext.fill(0);
   const p = storePath(stateDir);
-  await writeFile(p, JSON.stringify({ envelope }), { mode: 0o600 });
-  await chmod(p, 0o600);
+  // Atomic replace: write a temp file then rename over the live store. Receipts are
+  // the ONLY copy (readStore throws on a corrupt store) — a crash mid-write must not
+  // truncate/corrupt receipts.enc and brick the audit trail + every markOutcome.
+  const tmp = `${p}.tmp`;
+  await writeFile(tmp, JSON.stringify({ envelope }), { mode: 0o600 });
+  await chmod(tmp, 0o600);
+  await rename(tmp, p);   // atomic on POSIX
+}
+
+// Serialize store mutations per state dir. MCP tool handlers are async and NOT
+// serialized by the SDK, so a concurrent appendReceipt (phaedo_consult) and
+// markOutcome (phaedo_record_outcome/escalation_status) both read the same snapshot
+// and the second write clobbers the first — a lost receipt or lost outcome mark.
+// A per-stateDir promise chain forces read-modify-write to run one at a time.
+const _storeLocks = new Map();
+function withStoreLock(stateDir, fn) {
+  const prev = _storeLocks.get(stateDir) || Promise.resolve();
+  const next = prev.then(fn, fn);                 // run regardless of the prior result
+  _storeLocks.set(stateDir, next.then(() => {}, () => {}));  // a rejection must not break the chain
+  return next;
 }
 
 // Build the §10.6 receipt object from a resolved consultation. Pure. Captures the
@@ -126,11 +144,13 @@ export function buildReceipt({ via, agentId, request, response, drivers, now = D
 
 // Append one receipt; evict oldest beyond the cap. Returns the stored receipt.
 export async function appendReceipt(stateDir, receipt, { cap = DEFAULT_CAP, now = Date.now() } = {}) {
-  const store = await readStore(stateDir);
-  store.receipts.push(receipt);
-  if (store.receipts.length > cap) store.receipts.splice(0, store.receipts.length - cap);
-  await writeStore(stateDir, store, now);
-  return receipt;
+  return withStoreLock(stateDir, async () => {
+    const store = await readStore(stateDir);
+    store.receipts.push(receipt);
+    if (store.receipts.length > cap) store.receipts.splice(0, store.receipts.length - cap);
+    await writeStore(stateDir, store, now);
+    return receipt;
+  });
 }
 
 // The ONE permitted mutation (§10.6): set user_action on an existing receipt.
@@ -139,12 +159,14 @@ export async function updateUserAction(stateDir, receiptId, action, { now = Date
   if (!USER_ACTIONS.includes(action)) {
     throw new Error(`user_action must be one of: ${USER_ACTIONS.join(', ')}`);
   }
-  const store = await readStore(stateDir);
-  const r = store.receipts.find((x) => x.receipt_id === receiptId);
-  if (!r) return false;
-  r.user_action = action;
-  await writeStore(stateDir, store, now);
-  return true;
+  return withStoreLock(stateDir, async () => {
+    const store = await readStore(stateDir);
+    const r = store.receipts.find((x) => x.receipt_id === receiptId);
+    if (!r) return false;
+    r.user_action = action;
+    await writeStore(stateDir, store, now);
+    return true;
+  });
 }
 
 // Decrypt and return all receipts (oldest first). The dev/harness read path — and

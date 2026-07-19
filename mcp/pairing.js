@@ -124,6 +124,7 @@ export async function pairAtEndpoint(endpoint, { code, relayDeviceId = null, log
   // Long-term ECDH → pair_key; SAS (the MITM anchor) over both pubkeys.
   const shared  = await Identity.deriveSharedWithPeer(vaultPub);
   const pairKey = await Kdf.derivePairKey(shared, body.client_id);
+  shared.fill(0);   // raw ECDH secret consumed — zero it (matches phone-source.js key hygiene)
   const sas     = Kdf.formatSAS(await Kdf.deriveSAS(extPub, vaultPub));
 
   log('');
@@ -148,11 +149,14 @@ export async function pairAtEndpoint(endpoint, { code, relayDeviceId = null, log
   // escalation/fp-mailbox deposits get 401.
   const relaySecret = body.relay_device_secret || null;
 
+  const pairKeyEnc = b64uEnc(pairKey);
+  pairKey.fill(0);   // persisted as base64url below — zero the long-lived key buffer
+
   return {
     endpoint,
     client_id:     body.client_id,
     client_secret: body.client_secret,
-    pair_key:      b64uEnc(pairKey),
+    pair_key:      pairKeyEnc,
     vault_pub:     body.vault_pub,
     sas,
     ...(relayId ? { relay_device_id: relayId } : {}),

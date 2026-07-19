@@ -1,6 +1,15 @@
 # Changelog — phaedo-mcp
 
-## 0.2.1 — pending publish (metadata only)
+## 0.2.2 — pending publish (metadata only)
+
+`repository` (package.json + server.json) → the new PUBLIC open-core repo
+`github.com/phaedo-labs/phaedo-mcp` (spec + reference server; staged by
+`scripts/export-public-repo.mjs`). The prior target — the `phaedo-labs/phaedo`
+monorepo — is private, so npm's Repository link 404'd for the public.
+`directory`/`subfolder: mcp` unchanged (the public repo keeps the same layout).
+No code change, no wire change; `phaedo_protocol_version` stays `0.1`.
+
+## 0.2.1 — published 2026-07-18 (metadata only)
 
 Namespace + repository move from the personal `galavoxx` account to the `phaedo-labs`
 org — no code change, no wire change. `phaedo_protocol_version` stays `0.1`.

@@ -235,6 +235,30 @@ ok(validateFingerprint({ conflict_records: [{ conflict_id: 'c', layer: 'surface'
    resolution: { by: 'system' } }] }, fpSchema).some((e) => /chosen_value|prior_value/.test(e)),
    "catches a by:'system' resolution missing chosen_value/prior_value (the audit pair the review UI dispatches on)");
 
+// §4.1 identity fields — TYPE, not just presence (validateFingerprint is the sole
+// conformance authority; no ajv backstop).
+ok(validateFingerprint({ phaedo_protocol_version: 5 }, fpSchema).some((e) => /phaedo_protocol_version/.test(e)),
+   'catches a non-string phaedo_protocol_version (was presence-only)');
+ok(validateFingerprint({ phaedo_protocol_version: 'garbage' }, fpSchema).some((e) => /phaedo_protocol_version/.test(e)),
+   'catches a malformed protocol-version string (must match MAJOR.MINOR)');
+ok(validateFingerprint({ schema_revision: -3 }, fpSchema).some((e) => /schema_revision/.test(e)),
+   'catches a negative schema_revision');
+ok(validateFingerprint({ schema_revision: 'x' }, fpSchema).some((e) => /schema_revision/.test(e)),
+   'catches a non-integer schema_revision');
+ok(validateFingerprint({ phaedo_protocol_version: '0.1', subject_id: 'u', schema_revision: 0 }, fpSchema)
+     .every((e) => !/phaedo_protocol_version|subject_id|schema_revision/.test(e)),
+   'well-formed identity fields pass the type checks');
+
+// §5.2 standing_rules — injected verbatim, so the standard must bound them independently.
+ok(validateFingerprint({ standing_rules: [{ kind: 'directive' }] }, fpSchema).some((e) => /standing_rules\[0\]\.kind/.test(e)),
+   'catches a standing_rules kind not in enum');
+ok(validateFingerprint({ standing_rules: [{ kind: 'instruction' }] }, fpSchema).some((e) => /instruction requires text/.test(e)),
+   'catches an instruction rule missing its (injected) text');
+ok(validateFingerprint({ standing_rules: [{ kind: 'instruction', text: 'x'.repeat(1001) }] }, fpSchema).some((e) => /maxLength/.test(e)),
+   'catches an over-long injected rule text');
+ok(validateFingerprint({ standing_rules: [{ kind: 'instruction', text: 'email me at a@b.com' }] }, fpSchema).some((e) => /episodic/.test(e)),
+   'catches episodic content in an injected rule');
+
 // §4.7 PRODUCER PARITY for BAD-0014 — the schema's resolution.by enum is enforced
 // at validate-time but no test asserts producer source files only write enum values.
 // A future commit that slipped `by: 'oracle'` into reconcile.js / conflict-review.js

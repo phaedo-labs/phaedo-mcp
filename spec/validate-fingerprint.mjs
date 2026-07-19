@@ -78,6 +78,17 @@ export function validateFingerprint(fp, schema = loadFingerprintSchema()) {
   const errs = [];
   if (!isObj(fp)) return ['fingerprint must be an object'];
   for (const k of (fpDef.required || [])) if (!(k in fp)) errs.push(`missing required ${k}`);
+  // §4.1 identity fields — TYPE/shape, not just presence. Consumers branch on the
+  // version string (.startsWith()/.split('.')), so a non-string or garbage version
+  // must not pass conformance (validateFingerprint is the sole authority — there is
+  // no ajv backstop).
+  const pvDef = fpDef.properties.phaedo_protocol_version;
+  if ('phaedo_protocol_version' in fp &&
+      !(typeof fp.phaedo_protocol_version === 'string' && new RegExp(pvDef.pattern).test(fp.phaedo_protocol_version)))
+    errs.push('phaedo_protocol_version must be a "MAJOR.MINOR" string');
+  if ('subject_id' in fp && typeof fp.subject_id !== 'string') errs.push('subject_id must be a string');
+  if ('schema_revision' in fp && !(Number.isInteger(fp.schema_revision) && fp.schema_revision >= 0))
+    errs.push('schema_revision must be an integer >= 0');
   if ('layers' in fp && !isObj(fp.layers)) errs.push('layers must be an object');
   if (fp.persona_strength !== undefined && !inRange(fp.persona_strength, fpDef.properties.persona_strength)) errs.push('persona_strength out of [0,1]');
   for (const [lid, L] of Object.entries(isObj(fp.layers) ? fp.layers : {})) {
@@ -127,6 +138,24 @@ export function validateFingerprint(fp, schema = loadFingerprintSchema()) {
         if (!('prior_value' in r.resolution))  errs.push(`${at}.resolution missing prior_value (required when by='system')`);
       }
     }
+  }
+  // §5.2 standing_rules — injected VERBATIM into the context block ("Injected as-is —
+  // MUST NOT be summarized"), so the standard must independently bound them: a stale
+  // or third-party producer's rule is untrusted (same reasoning as the summary
+  // re-check above). Enforce kind enum, the instruction→text conditional, the text
+  // maxLength, and the episodic-content rail — the summary guard's asymmetric sibling.
+  const srItems = fpDef.properties.standing_rules && fpDef.properties.standing_rules.items;
+  const kindEnum = srItems && srItems.properties && srItems.properties.kind && srItems.properties.kind.enum;
+  const textMax = (srItems && srItems.properties && srItems.properties.text && srItems.properties.text.maxLength) || 1000;
+  for (const [i, r] of (Array.isArray(fp.standing_rules) ? fp.standing_rules : []).entries()) {
+    const at = `standing_rules[${i}]`;
+    if (!isObj(r)) { errs.push(`${at} must be an object`); continue; }
+    if (!('kind' in r)) errs.push(`${at} missing kind`);
+    else if (kindEnum && !kindEnum.includes(r.kind)) errs.push(`${at}.kind not in enum`);
+    if (r.kind === 'instruction' && typeof r.text !== 'string') errs.push(`${at} instruction requires text`);
+    if (r.text !== undefined && typeof r.text !== 'string') errs.push(`${at}.text must be a string`);
+    if (typeof r.text === 'string' && r.text.length > textMax) errs.push(`${at}.text exceeds maxLength ${textMax}`);
+    if (typeof r.text === 'string' && EPISODIC_RE.test(r.text)) errs.push(`${at}.text carries episodic content (URL/email/domain) — not admitted in an injected rule (§4.6)`);
   }
   return errs;
 }

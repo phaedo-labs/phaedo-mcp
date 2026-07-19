@@ -157,7 +157,7 @@ if (existsSync(ESCALATION_POLICY_PATH)) {
   catch (e) { process.stderr.write(`[phaedo-mcp] ignoring malformed escalation policy (${ESCALATION_POLICY_PATH}): ${e.message}\n`); }
 }
 
-const server = new McpServer({ name: 'phaedo', version: '0.2.1' });
+const server = new McpServer({ name: 'phaedo', version: '0.2.2' });
 
 // ── Tool: phaedo_request_injection (binding §3.1) ─────────────────────────────
 server.registerTool(
