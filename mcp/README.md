@@ -1,9 +1,12 @@
-# Phaedo MCP server — Phase 1 (push injection)
+# Phaedo MCP server (`phaedo-mcp`)
 
-A local [MCP](https://modelcontextprotocol.io) server that exposes your Phaedo
-cognitive-fingerprint **projection** to any MCP client (Claude Desktop, Claude
-Code, Cursor, agent frameworks) — so the assistant responds in your style
-without the Chrome extension. One integration, every MCP client.
+A local [MCP](https://modelcontextprotocol.io) server that brings your Phaedo
+cognitive fingerprint to any MCP client (Claude Desktop, Claude Code, Cursor,
+agent frameworks) — no Chrome extension needed. It injects your fingerprint
+**projection** so the assistant responds in your style, and adds **consultation**
+(decision/risk signals), **real-time escalation** to your paired phone for a live
+approve / deny / modify on a blocking decision, and **act-as-me** learning from
+your outcome marks. One integration, every MCP client.
 
 Implements `docs/protocol/mcp-binding.md` §3.1:
 
@@ -17,11 +20,18 @@ Implements `docs/protocol/mcp-binding.md` §3.1:
 | tool | `phaedo_escalate` | run the consult and, on a blocking signal (`escalate`, or a consequential `clarify`), wake the subject's paired device for a live **approve / deny / modify**; returns a `request_id` (non-blocking). Safe default on no answer: **hold**. |
 | tool | `phaedo_escalation_status` | poll an escalation by `request_id`; on resolution records the subject's live decision as the §10.6 outcome automatically (a real-time approve/deny is the strongest act-as-me signal). |
 | tool | `phaedo_record_outcome` | §10.6 — record what the SUBJECT decided about a consulted action (`approved`/`rejected`/`modified`/`unknown`). A `rejected`/`modified` outcome teaches the **act-as-me** channel (how the user wants delegated work handled). |
+| tool | `phaedo_sign_mandate` | §8.3 — ask the subject to **sign** an AP2 Intent Mandate built from their standing authorizations (a verifiable payment credential). Deposits the request and returns a `request_id` + the unsigned mandate (non-blocking). The subject signs on their phone in the Secure Enclave, or declines. |
+| tool | `phaedo_sign_status` | poll a `phaedo_sign_mandate` request by `request_id` (+ the returned mandate); returns the mandate carrying a **verified** signature once signed, `refused` if declined, or pending/expired. The signature is checked against the subject's published signing key before it is returned. |
 
 The projection is rendered by the **same** `context-block.js` the extension
 injects, so MCP injection is byte-identical to web injection.
 
 ## Status
+
+The phases below track the **fingerprint source** (how the server obtains the
+fingerprint). The consultation, real-time escalation, act-as-me / delegation, and
+receipts-audit surfaces (the tools table above) shipped on top of these in the
+**0.2.x** line — see `CHANGELOG.md`.
 
 - **Phase 1a (this cut):** reads the fingerprint from a local JSON file (see
   *Fingerprint source*). Lets injection work in a real client today, no crypto.
@@ -50,8 +60,10 @@ injects, so MCP injection is byte-identical to web injection.
   `../docs/roadmap/mcp-revocable-approval-plan.md`. Phone-gated unlock stays a
   deferred enterprise mode behind a config flag.
 
-**Injection-only.** MCP never returns the conversation, so there is **no
-capture** here (binding §5) — your fingerprint does not learn from MCP sessions.
+**No conversation capture.** MCP never returns the conversation, so your
+fingerprint does not learn from MCP sessions (binding §5). (Consultation,
+escalation, and `phaedo_record_outcome` shape and record *decisions*, but none
+capture conversation text into the fingerprint.)
 Local **stdio** only; **standard** mode only (enhanced-privacy/Stained-Glass and
 remote HTTP/SSE are out of this cut).
 
@@ -181,6 +193,31 @@ fully automatic depending on the client:
 
   Every chat in that project then injects automatically.
 
+### Capture from Claude Code / Cowork (optional)
+
+`npm run setup:code-hook` also installs a **SessionEnd** hook that reads the just-ended
+transcript locally, derives behavioral signals (deterministic pattern detectors), and
+deposits an encrypted **signal delta** to the owner — so your Claude Code / Cowork usage
+feeds the fingerprint, not just the browser. The transcript is counted and **discarded**
+(nothing but signal names + integers leaves the machine); a paired phone/extension drains
+and merges it.
+
+Optionally enrich the deterministic detectors with a **local model** (opt-in) — it
+classifies the messages the regexes miss, against the same taxonomy, and feeds the same
+counters (so re-fires stay idempotent). Any **Ollama / OpenAI-compatible** endpoint works:
+
+```
+ollama pull llama3.1:8b          # or any local model
+npm run setup:capture-model -- llama3.1:8b     # writes ~/.phaedo-mcp/capture-model.json
+npm run setup:capture-model -- off             # turn it back off
+```
+
+Point it elsewhere with `--capture-url <url>` (default `http://localhost:11434`). It's
+fail-safe: endpoint down/slow/garbage → the hook silently falls back to the deterministic
+detectors, and a model call can never break or stall a session (30s budget, hook always
+exits 0). Prefer the `setup:capture-model` config file over an env var — the file reaches
+Dock-launched Claude Desktop, a shell `export` does not.
+
 ## Consult at decision points (`phaedo_consult`, §10)
 
 Beyond injecting style, an agent can **ask the fingerprint how the user's pattern
@@ -303,7 +340,7 @@ The installer writes exactly this. The minimal **paired** entry needs no `env` �
   "mcpServers": {
     "phaedo": {
       "command": "/absolute/path/to/node",
-      "args": ["/Users/galavoxx/phaedo/mcp/server.js"]
+      "args": ["/absolute/path/to/phaedo/mcp/server.js"]
     }
   }
 }
@@ -315,5 +352,5 @@ chat and prepend the returned `projection`.
 
 **Claude Code** — `.mcp.json` in a project, or:
 ```bash
-claude mcp add phaedo -- /absolute/path/to/node /Users/galavoxx/phaedo/mcp/server.js
+claude mcp add phaedo -- /absolute/path/to/node /absolute/path/to/phaedo/mcp/server.js
 ```

@@ -102,6 +102,11 @@ export function consultOptsFromEnv(env = process.env) {
     apiKey: env.PHAEDO_CONSULT_API_KEY || null, // for an OpenAI-compatible endpoint
     timeoutMs: Number(env.PHAEDO_CONSULT_TIMEOUT_MS) || 15000,
     policies: null, // a loaded policy doc; the server fills this from the policy file
+    // §10.5 `agents`: this server's OWN paired-client id, filled by the server from
+    // `pairing.json` (see readServingClientId). Null = unpaired, which makes every
+    // `agents`-scoped relaxing rule inert. Never sourced from the environment or the
+    // caller — it must not be spoofable by whatever launched the process.
+    clientId: null,
   };
 }
 
@@ -125,7 +130,9 @@ export async function resolveConsultation(vd, request = {}, opts = {}) {
     try {
       const judged = await modelJudge(vd, n, opts);
       // Authored guardrails override the model judge too (applied last so they win).
-      return applyPolicies(judged, n, loadPolicies(vd, opts));
+      // Same §10.5 context as the deterministic path — including the serving
+      // `client_id`, so `agents` scoping is not bypassed by configuring a model.
+      return applyPolicies(judged, n, loadPolicies(vd, opts), { now: opts.now, clientId: opts.clientId ?? null });
     } catch (err) {
       process.stderr.write?.(`[phaedo-consult] model judge fell back to rules: ${err.message}\n`);
     }

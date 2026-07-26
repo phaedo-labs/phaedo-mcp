@@ -22,6 +22,7 @@
 // override — it maps to `unknown` and teaches nothing.
 
 import { Phaedo, b64uDec } from './lib/phaedo-crypto.js';
+import { normalizeActionBinding } from './action-binding.js';
 
 const { Kdf, Envelope } = Phaedo;
 const DEFAULT_RELAY = 'https://phaedo-relay.fly.dev';
@@ -92,18 +93,44 @@ export function loadEscalationPolicy(vd, opts = {}) {
   return mergeEscalationPolicy(vd?.phaedo_fingerprint?.escalation_policy, opts.escalationPolicy);
 }
 
-// The clarify push mode for an action under a policy: a per-domain override (substring
-// match, either direction — same convention as consult domains) wins over the default,
-// which falls back to the built-in 'consequential'.
+// Does a `by_domain` KEY govern this action domain? EXACT match, or a dot-hierarchy
+// PARENT match (`finance` governs `finance.crypto_trading`).
+//
+// This deliberately replaces the old bidirectional substring test
+// (`domain.includes(k) || k.includes(domain)`), which was both wrong and unsafe:
+//   - `legal` spuriously governed `paralegal`, and `care` governed `healthcare` —
+//     accidental substrings, not subdomains. So a subject who set `legal: never` to
+//     silence legal noise ALSO silenced every paralegal action, and a suppressed
+//     clarify never reaches the phone: the failure is invisible by construction.
+//   - the reverse direction (`k.includes(domain)`) let a narrow key govern a broad
+//     action — a `finance.crypto_trading` rule firing on a bare `finance` action.
+// A real subdomain rides a `.` boundary; a coincidental letter overlap does not.
+// Parent→child only (a `finance` rule covers its subdomains; a crypto rule does NOT
+// reach up to govern general finance). Anything unmatched falls to `default`, which
+// the subject controls — never to a wrong, more-specific rule.
+function domainRuleApplies(key, domain) {
+  return domain === key || domain.startsWith(key + '.');
+}
+
+// The clarify push mode for an action under a policy: the MOST SPECIFIC per-domain
+// override wins over the default, which falls back to the built-in 'consequential'.
+//
+// "Most specific" = the longest applicable key, so `finance.crypto_trading` beats a
+// bare `finance` for a crypto action. This is also what makes the result
+// DETERMINISTIC: the old first-match-wins loop returned different modes for the same
+// action depending on JSON key order, so a subject's specific rule could lose to a
+// general one purely by where it sat in the object.
 export function resolveClarifyMode(actionDescriptor = {}, policy = null) {
   const c = policy && policy.clarify;
   if (!c) return 'consequential';
   const domain = String(actionDescriptor?.domain || '').toLowerCase();
   if (domain && c.by_domain) {
+    let best = null;
     for (const [k, mode] of Object.entries(c.by_domain)) {
       if (!CLARIFY_MODES.has(mode)) continue;
-      if (domain.includes(k) || k.includes(domain)) return mode;
+      if (domainRuleApplies(k, domain) && (best === null || k.length > best.k.length)) best = { k, mode };
     }
+    if (best) return best.mode;
   }
   return CLARIFY_MODES.has(c.default) ? c.default : 'consequential';
 }
@@ -131,6 +158,12 @@ const DECISION_OUTCOME = { approve: 'approved', deny: 'rejected', modify: 'modif
 export function buildEscalationPayload(consultRequest = {}, consultResponse = {}) {
   const ad = (consultRequest.action_descriptor && typeof consultRequest.action_descriptor === 'object') ? consultRequest.action_descriptor : {};
   const clip = (s, n) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().slice(0, n) : undefined);
+  // The §10.2 binding, when the agent sent one. `summary` above is the agent's
+  // PROSE — its account of what it is about to do. This is the call itself. The
+  // subject approving an escalation should see both, because the whole class of
+  // approval-gate bypasses works by making the two differ.
+  let bnd = null;
+  try { bnd = normalizeActionBinding(consultRequest.action_binding); } catch { bnd = null; }
   return {
     consultation_type: typeof consultRequest.consultation_type === 'string' ? consultRequest.consultation_type : undefined,
     agent_id: clip(consultRequest.agent_id, 120),
@@ -140,6 +173,11 @@ export function buildEscalationPayload(consultRequest = {}, consultResponse = {}
       magnitude: ['low', 'medium', 'high'].includes(ad.magnitude) ? ad.magnitude : undefined,
       reversible: typeof ad.reversible === 'boolean' ? ad.reversible : undefined,
       amount: typeof ad.amount === 'number' && isFinite(ad.amount) ? ad.amount : undefined,
+      ...(bnd ? {
+        tool_name: bnd.tool_name,
+        arguments_hash: bnd.arguments_hash,
+        ...(bnd.arguments_preview ? { arguments_preview: bnd.arguments_preview } : {}),
+      } : {}),
     },
     signal: clip(consultResponse.signal, 40),
     rationale_hint: clip(consultResponse.rationale_hint, 280),

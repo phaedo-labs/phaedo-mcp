@@ -155,6 +155,14 @@ Path A delta capture nor Path B extraction. Capture on MCP-only clients remains
 an open problem addressed by the desktop helper track
 (`../roadmap/desktop-app-support.md`).
 
+This stays true even where capture ships in the **same package** as the server:
+the Claude Code capture hook (`../roadmap/desktop-capture-helper.md` track A) reads
+the local session transcript and is a **sibling channel to MCP, not MCP** — the
+protocol still hands the server no conversation. When such a surface records what
+it learns, it deposits a **signal delta** (never a whole fingerprint) over the
+`capture_to_owner` mailbox lane (`../roadmap/desktop-capture-deposit.md`), same
+ciphertext-only, discard-raw contract as web capture.
+
 ## 6. Conformance
 
 An implementation of this binding is an MCP-transport realization of the core
@@ -172,9 +180,14 @@ tracked as core-spec open question 14.
 - Authentication model for a remote (HTTP/SSE) server.
 
 ---
-*Draft — tracks core protocol v0.1.35 (adds, in v0.1.34–35, the real-time escalation surface:
-`phaedo_escalate` + `phaedo_escalation_status` route a blocking decision to the subject's
-device for a live approve/deny/modify, over a ciphertext-only relay escalation channel with a
-bounded window + safe-default hold; v0.1.35 stakes-gates the `clarify` push. And, since
-v0.1.30, the delegation-PROMOTION transport via the relay `agent_to_ext` mailbox lane,
-Proposal 0008). Will be revised to normative alongside protocol v0.2.*
+*Draft — tracks core protocol v0.1.48. `phaedo_consult`, `phaedo_check_authorization` and
+`phaedo_escalate` all accept the optional §10.2 `action_binding` (v0.1.48), which ties the
+consultation to the concrete call the descriptor claims to describe — recorded on the receipt,
+displayed on the escalation card, and required by any authorization the subject gated with
+`require_binding`. The real-time escalation surface (`phaedo_escalate` +
+`phaedo_escalation_status`, v0.1.33–35) routes a blocking decision to the subject's device for a
+live approve/deny/modify over a ciphertext-only relay escalation channel with a bounded window +
+safe-default hold; `clarify` is stakes-gated (v0.1.35). `phaedo_record_outcome` + the
+delegation-promotion transport (relay `agent_to_ext` mailbox lane, Proposal 0008; v0.1.30–32)
+carry the act-as-me loop, and the receipts audit channel (v0.1.38–39) reuses the mailbox
+(`agent_to_phone`/`phone_to_agent` lanes). Will be revised to normative alongside protocol v0.2.*

@@ -22,7 +22,7 @@
 //   node install.mjs --only cursor   restrict to one client id
 //   node install.mjs --help
 
-import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync, rmSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
@@ -31,8 +31,10 @@ import { spawnSync } from 'child_process';
 const BASE_DIR = dirname(fileURLToPath(import.meta.url));
 const SERVER_PATH = join(BASE_DIR, 'server.js');
 const HOOK_PATH = join(BASE_DIR, 'hooks', 'session-start.mjs');
+const CAPTURE_HOOK_PATH = join(BASE_DIR, 'hooks', 'session-end.mjs');
 const ENTRY_KEY = 'phaedo';
-const HOOK_MARKER = 'hooks/session-start.mjs'; // identifies our SessionStart entry
+const HOOK_MARKER = 'hooks/session-start.mjs';         // identifies our SessionStart entry
+const CAPTURE_HOOK_MARKER = 'hooks/session-end.mjs';   // identifies our SessionEnd capture entry
 
 // ── Client registry ──────────────────────────────────────────────────────────
 // Every supported client stores MCP servers as a top-level `mcpServers` object,
@@ -147,30 +149,48 @@ export function hookCommand({ nodePath = process.execPath, hookPath = HOOK_PATH 
   return `"${nodePath}" "${hookPath}"`;
 }
 
-const isPhaedoHookEntry = (e) =>
+// Match the marker path-separator-agnostically: the marker uses forward slashes
+// ('hooks/session-end.mjs') but the command is built with path.join(), which on Windows
+// yields backslashes ('...\\hooks\\session-end.mjs'). Without normalizing, Windows never
+// recognizes its own hook entries — re-installs duplicate them and uninstall can't remove
+// them. Normalize both sides to forward slashes before the substring test.
+const norm = (s) => String(s).replace(/\\/g, '/');
+const isPhaedoHookEntryFor = (marker) => (e) =>
   e && Array.isArray(e.hooks) &&
-  e.hooks.some((h) => typeof h.command === 'string' && h.command.includes(HOOK_MARKER));
+  e.hooks.some((h) => typeof h.command === 'string' && norm(h.command).includes(norm(marker)));
 
-export function mergeSessionStartHook(settings, command) {
+// Generic per-event merge/remove — the SessionStart (injection) and SessionEnd
+// (capture) entries use the same shape, distinguished by their script-path marker.
+export function mergeHookEntry(settings, event, command, marker) {
+  const isOurs = isPhaedoHookEntryFor(marker);
   const next = { ...settings, hooks: { ...(settings.hooks || {}) } };
-  const prior = Array.isArray(next.hooks.SessionStart) ? next.hooks.SessionStart : [];
-  const others = prior.filter((e) => !isPhaedoHookEntry(e)); // drop a stale phaedo entry (path refresh)
-  const existing = prior.find(isPhaedoHookEntry);
+  const prior = Array.isArray(next.hooks[event]) ? next.hooks[event] : [];
+  const others = prior.filter((e) => !isOurs(e)); // drop a stale phaedo entry (path refresh)
+  const existing = prior.find(isOurs);
   const already = !!existing && existing.hooks.some((h) => h.command === command);
-  next.hooks.SessionStart = [...others, { hooks: [{ type: 'command', command }] }];
+  next.hooks[event] = [...others, { hooks: [{ type: 'command', command }] }];
   return { settings: next, changed: !already };
 }
 
-export function removeSessionStartHook(settings) {
-  if (!settings.hooks || !Array.isArray(settings.hooks.SessionStart)) return { settings, changed: false };
-  const prior = settings.hooks.SessionStart;
-  const others = prior.filter((e) => !isPhaedoHookEntry(e));
+export function removeHookEntry(settings, event, marker) {
+  const isOurs = isPhaedoHookEntryFor(marker);
+  if (!settings.hooks || !Array.isArray(settings.hooks[event])) return { settings, changed: false };
+  const prior = settings.hooks[event];
+  const others = prior.filter((e) => !isOurs(e));
   if (others.length === prior.length) return { settings, changed: false };
   const hooks = { ...settings.hooks };
-  if (others.length) hooks.SessionStart = others; else delete hooks.SessionStart;
+  if (others.length) hooks[event] = others; else delete hooks[event];
   const next = { ...settings, hooks };
   if (Object.keys(next.hooks).length === 0) delete next.hooks;
   return { settings: next, changed: true };
+}
+
+// Back-compat wrappers (SessionStart injection hook).
+export function mergeSessionStartHook(settings, command) {
+  return mergeHookEntry(settings, 'SessionStart', command, HOOK_MARKER);
+}
+export function removeSessionStartHook(settings) {
+  return removeHookEntry(settings, 'SessionStart', HOOK_MARKER);
 }
 
 // action: 'install' | 'uninstall'. Returns a result record. settings.json is a
@@ -186,15 +206,46 @@ export function applyCodeHook({ action, dryRun = false, home = homedir() } = {})
   }
   if (action === 'uninstall') {
     if (!read.existed) return { name, status: 'absent', detail: 'no settings.json' };
-    const { settings, changed } = removeSessionStartHook(read.config);
-    if (!changed) return { name, status: 'absent', detail: 'no phaedo hook to remove' };
-    if (!dryRun) { backup(path); writeConfig(path, settings); }
+    const start = removeSessionStartHook(read.config);
+    const both = removeHookEntry(start.settings, 'SessionEnd', CAPTURE_HOOK_MARKER);
+    if (!start.changed && !both.changed) return { name, status: 'absent', detail: 'no phaedo hook to remove' };
+    if (!dryRun) { backup(path); writeConfig(path, both.settings); }
     return { name, status: dryRun ? 'would-remove' : 'removed', detail: path };
   }
-  const { settings, changed } = mergeSessionStartHook(read.config, hookCommand());
-  if (!changed) return { name, status: 'unchanged', detail: 'already configured' };
+  // Always install SessionStart injection. Only install the SessionEnd CAPTURE hook
+  // when its dependencies actually resolve from THIS install location: the hook loads
+  // capture/* and extraction/delta-lift.js via lib/capture-home.js — repo root in a
+  // clone, mcp/vendor/ in the published tarball (build-package.mjs vendors the
+  // closure). captureHookAvailable() gates the wiring so a broken layout (e.g. a
+  // hand-copied hooks/ dir with neither home) degrades to injection-only instead of
+  // failing every session end with ERR_MODULE_NOT_FOUND.
+  const start = mergeSessionStartHook(read.config, hookCommand());
+  let settings = start.settings;
+  let captureChanged = false;
+  let captureNote = '';
+  if (captureHookAvailable()) {
+    const both = mergeHookEntry(settings, 'SessionEnd', hookCommand({ hookPath: CAPTURE_HOOK_PATH }), CAPTURE_HOOK_MARKER);
+    settings = both.settings; captureChanged = both.changed;
+  } else {
+    // Never leave a broken capture hook wired if we can't run it here.
+    const rm = removeHookEntry(settings, 'SessionEnd', CAPTURE_HOOK_MARKER);
+    settings = rm.settings; captureChanged = rm.changed;
+    captureNote = ' (capture hook skipped — not available in this install; injection only)';
+  }
+  const changed = start.changed || captureChanged;
+  if (!changed) return { name, status: 'unchanged', detail: `already configured${captureNote}` };
   if (!dryRun) { if (read.existed) backup(path); writeConfig(path, settings); }
-  return { name, status: dryRun ? 'would-write' : 'configured', detail: path };
+  return { name, status: dryRun ? 'would-write' : 'configured', detail: path + captureNote };
+}
+
+// The SessionEnd capture hook can only run where its imported modules resolve —
+// the repo root (dev clone) or mcp/vendor/ (published tarball), mirroring
+// lib/capture-home.js's resolution exactly.
+export function captureHookAvailable(hookPath = CAPTURE_HOOK_PATH) {
+  const hookDir = dirname(hookPath);
+  const homes = [join(hookDir, '..', '..'), join(hookDir, '..', 'vendor')];
+  return homes.some((h) => existsSync(join(h, 'capture', 'transcript.js')) &&
+                           existsSync(join(h, 'extraction', 'delta-lift.js')));
 }
 
 function backup(path) {
@@ -240,18 +291,87 @@ export function applyToClient(client, { action, entry, dryRun = false } = {}) {
   return { ...client, status: dryRun ? 'would-write' : 'configured', detail: configPath };
 }
 
+// Default on-disk locations for everything the server persists. The state dir
+// (cache.key + cache.enc + receipts.enc) mirrors mcp/cache.js; the pairing/identity
+// records sit next to the server.
+const STATE_DIR = process.env.PHAEDO_MCP_STATE_DIR || join(homedir(), '.phaedo-mcp');
+
+// Delete all local Phaedo state the server wrote — the "leave nothing behind" half
+// of uninstall. Client-config removal only unwires the server; without this the
+// derived key material (cache.key), the ciphertext at-rest cache (cache.enc), the
+// §10.6 receipts audit store (receipts.enc), and the pairing/identity records all
+// persist on disk after "uninstall". Parameterized (stateDir/baseDir) so it's
+// node-testable against temp dirs, not the real home.
+export function purgeLocalData({ stateDir = STATE_DIR, baseDir = BASE_DIR, dryRun = false } = {}) {
+  const targets = [
+    stateDir,                          // cache.key + cache.enc + receipts.enc
+    join(baseDir, 'pairing.json'),
+    join(baseDir, 'identity.json'),
+  ];
+  const removed = [];
+  for (const t of targets) {
+    if (!existsSync(t)) continue;
+    if (!dryRun) {
+      try { rmSync(t, { recursive: true, force: true }); }
+      catch (e) { removed.push(`${t} (error: ${e.message})`); continue; }
+    }
+    removed.push(t);
+  }
+  return removed;
+}
+
+// ── Capture-model config (--capture-model) ────────────────────────────────────
+// The durable on-switch for the SessionEnd capture hook's option-(b) model
+// detector: <state dir>/capture-model.json, read by capture/model-detect.js
+// captureModelOpts (env vars still win as a per-session override). A config
+// FILE — not env in the MCP client entries — because the hook is spawned by
+// Claude Code / Cowork, not by the MCP server, and Dock-launched apps never
+// read shell-profile exports. `off` removes the file. Exported for tests.
+export async function applyCaptureModelConfig(model, { url, stateDir = STATE_DIR, dryRun = false, fetchImpl } = {}) {
+  const path = join(stateDir, 'capture-model.json');
+  if (model === 'off') {
+    if (!existsSync(path)) return { status: 'unchanged', detail: 'capture model already off', path };
+    if (!dryRun) rmSync(path);
+    return { status: dryRun ? 'would-remove' : 'removed', detail: `capture model OFF (${path})`, path };
+  }
+  if (!model || typeof model !== 'string') {
+    return { status: 'error', detail: '--capture-model needs a model name (e.g. llama3.1:8b) or "off"', path };
+  }
+  if (!dryRun) {
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(path, JSON.stringify({ model, ...(url ? { url } : {}) }, null, 2) + '\n', 'utf8');
+  }
+  // Advisory reachability/presence probe (same endpoint shape as the consult
+  // judge's) — config is written regardless; the hook fails safe to regex-only.
+  let note = '';
+  try {
+    const probeUrl = (url || 'http://localhost:11434').replace(/\/$/, '');
+    const res = await (fetchImpl || globalThis.fetch)(`${probeUrl}/api/tags`, { signal: AbortSignal.timeout(1500) });
+    const names = res.ok ? ((await res.json()).models || []).map((m) => m.name || m.model).filter(Boolean) : [];
+    note = names.some((n) => n === model || n.startsWith(`${model}:`))
+      ? ' (model found in Ollama)'
+      : ` (endpoint reachable but "${model}" not pulled — run: ollama pull ${model})`;
+  } catch {
+    note = ' (endpoint not reachable — hook stays regex-only until it is)';
+  }
+  return { status: dryRun ? 'would-write' : 'configured', detail: `capture model → ${model}${url ? ` @ ${url}` : ''}${note}`, path };
+}
+
 function parseArgs(argv) {
-  const opts = { pair: false, uninstall: false, dryRun: false, only: null, codeHook: false, help: false };
+  const opts = { pair: false, uninstall: false, purge: false, dryRun: false, only: null, codeHook: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--pair') opts.pair = true;
     else if (a === '--uninstall') opts.uninstall = true;
+    else if (a === '--purge') opts.purge = true;
     else if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--only') opts.only = argv[++i];
     else if (a === '--code-hook') opts.codeHook = true;
     else if (a === '--consult-model') opts.consultModel = argv[++i];
     else if (a === '--consult-url') opts.consultUrl = argv[++i];
     else if (a === '--no-model-judge') opts.noModelJudge = true;
+    else if (a === '--capture-model') opts.captureModel = argv[++i];
+    else if (a === '--capture-url') opts.captureUrl = argv[++i];
     else if (a === '--help' || a === '-h') opts.help = true;
     else throw new Error(`unknown option: ${a}`);
   }
@@ -264,7 +384,15 @@ const HELP = `Phaedo MCP installer
   node install.mjs --pair          configure, then run the one-time pairing
   node install.mjs --code-hook     also add the Claude Code SessionStart hook
                                    (true auto-injection; ~/.claude/settings.json)
+  node install.mjs --capture-model <name|off>   turn the capture hook's local
+                                   model detector on (e.g. llama3.1:8b) or off.
+                                   Writes <state dir>/capture-model.json, which
+                                   reaches EVERY launch path (Dock apps never
+                                   read shell-profile exports). --capture-url
+                                   overrides the endpoint (default Ollama).
   node install.mjs --uninstall     remove the phaedo entry (and hook) everywhere
+  node install.mjs --uninstall --purge   ALSO delete all local Phaedo data on disk
+                                   (cache, key, receipts, pairing/identity records)
   node install.mjs --dry-run       preview changes, write nothing
   node install.mjs --only <id>     one client only: claude-desktop | cursor | claude-code
 
@@ -332,12 +460,27 @@ async function main(argv) {
   if (opts.codeHook || action === 'uninstall') {
     results.push(applyCodeHook({ action, dryRun: opts.dryRun }));
   }
+  // Capture-model on-switch (state-dir config file; see applyCaptureModelConfig).
+  if (action === 'install' && opts.captureModel !== undefined) {
+    const r = await applyCaptureModelConfig(opts.captureModel, { url: opts.captureUrl, dryRun: opts.dryRun });
+    results.push({ name: 'capture-model', ...r });
+  }
   const touched = [];
   for (const r of results) {
     const mark = { configured: '✓', removed: '✓', 'would-write': '·', 'would-remove': '·',
       unchanged: '=', absent: '–', error: '✗' }[r.status] || '?';
     console.log(`  ${mark} ${r.name.padEnd(16)} ${r.detail}`);
     if (r.status === 'configured' || r.status === 'would-write') touched.push(r);
+  }
+
+  if (opts.purge) {
+    const removed = purgeLocalData({ dryRun: opts.dryRun });
+    console.log(`\n${opts.dryRun ? 'Would delete' : 'Deleted'} local Phaedo data:`);
+    if (removed.length) for (const p of removed) console.log(`  ✓ ${p}`);
+    else console.log('  (nothing on disk to delete)');
+  } else if (action === 'uninstall') {
+    console.log(`\nLocal key material, cache, and receipts remain on disk (${STATE_DIR}, plus pairing.json/identity.json).`);
+    console.log('Run `node install.mjs --uninstall --purge` to delete those too.');
   }
 
   if (action === 'install') {

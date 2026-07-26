@@ -33,13 +33,41 @@
    * contains only strings. NOT full RFC 8785 — when §8.3 signing lands and we
    * canonicalize artifact bytes with numeric fields, switch to a JCS impl.
    */
+  // RFC 8785 (JCS) canonical JSON serialization — full method (spec §6, v0.1.44).
+  // In ECMAScript, JSON.stringify already emits RFC 8785-conformant scalars:
+  // shortest-round-trip ES number formatting ("1e+21", "1e-7", -0 → "0") and
+  // minimal string escaping (short escapes \b \t \n \f \r \" \\, with \u00XX
+  // only for the remaining control chars < 0x20). What it does NOT guarantee is
+  // recursive key ordering, and it silently serializes non-finite numbers as
+  // null. Full RFC 8785 here = UTF-16 code-unit key sort (Array.prototype.sort's
+  // default string order) + explicit REJECTION of values JSON cannot express
+  // (NaN/Infinity throw instead of corrupting the canonical bytes as "null";
+  // a top-level undefined throws instead of returning the invalid "undefined").
+  // Inside containers, undefined/function/symbol follow JSON.stringify
+  // semantics: omitted from objects, null in arrays. (The pre-v0.1.44 subset
+  // emitted invalid JSON for an undefined-valued object property.)
+  // MUST stay byte-identical to mobile/src/lib/envelope.ts (and the mirror in
+  // scripts/test_cross_compat.mjs); locked by TC-CANON vectors.
+  const notJson = (v) => v === undefined || typeof v === 'function' || typeof v === 'symbol'
   function canonicalStringify(value) {
-    if (value === null || typeof value !== 'object') return JSON.stringify(value)
-    if (Array.isArray(value)) {
-      return '[' + value.map(canonicalStringify).join(',') + ']'
+    if (typeof value === 'number' && !Number.isFinite(value)) {
+      throw new Error('canonicalStringify: non-finite numbers are not expressible in RFC 8785 JSON')
     }
-    const keys = Object.keys(value).sort()
-    return '{' + keys.map(k => JSON.stringify(k) + ':' + canonicalStringify(value[k])).join(',') + '}'
+    if (value === null || typeof value !== 'object') {
+      const s = JSON.stringify(value)   // throws natively on BigInt
+      if (s === undefined) throw new Error('canonicalStringify: a ' + typeof value + ' is not expressible in JSON')
+      return s
+    }
+    if (Array.isArray(value)) {
+      return '[' + value.map(v => notJson(v) ? 'null' : canonicalStringify(v)).join(',') + ']'
+    }
+    const keys = Object.keys(value).sort()   // UTF-16 code-unit order (RFC 8785 §3.2.3)
+    const parts = []
+    for (const k of keys) {
+      if (notJson(value[k])) continue
+      parts.push(JSON.stringify(k) + ':' + canonicalStringify(value[k]))
+    }
+    return '{' + parts.join(',') + '}'
   }
 
   function utf8(s) { return new TextEncoder().encode(s) }

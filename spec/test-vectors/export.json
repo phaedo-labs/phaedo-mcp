@@ -1,0 +1,77 @@
+{
+  "category": "TC-EXPORT",
+  "describes": "Section 8.2 portable bootstrap export — SHA-256 digest over the canonical serialization (§6) of the export object with `digest` omitted. Fully deterministic: an implementation reproduces `digest` from the inputs, and any tamper of artifact/pairing_token/ext_pub yields a mismatching digest (the runner proves both directions). Generated from the reference Phaedo.Export; runner: spec/test-vectors.mjs.",
+  "vectors": [
+    {
+      "test_id": "T-PHAEDO-EXPORT-0001",
+      "description": "Bootstrap export without ext_pub: expected full object incl. digest.",
+      "input": {
+        "artifact": {
+          "phaedo_protocol_version": "0.1",
+          "fingerprint_id": "vector-fp-0001",
+          "subject_id": "vector-subj-0001",
+          "schema_revision": 4,
+          "layers": {}
+        },
+        "pairing_token": "VECTOR-TOKEN-123456"
+      },
+      "expected": {
+        "phaedo_export_version": "0.1",
+        "mode": "bootstrap",
+        "artifact": {
+          "phaedo_protocol_version": "0.1",
+          "fingerprint_id": "vector-fp-0001",
+          "subject_id": "vector-subj-0001",
+          "schema_revision": 4,
+          "layers": {}
+        },
+        "pairing_token": "VECTOR-TOKEN-123456",
+        "digest": "0lkJJGleAEI2n2o-OZe8pDEpdjo62dvoVeS5PQgXkBQ"
+      }
+    },
+    {
+      "test_id": "T-PHAEDO-EXPORT-0002",
+      "description": "Bootstrap export with ext_pub (b64url of 32 fixed bytes 0x40..0x5f): digest binds it.",
+      "input": {
+        "artifact": {
+          "phaedo_protocol_version": "0.1",
+          "fingerprint_id": "vector-fp-0001",
+          "subject_id": "vector-subj-0001",
+          "schema_revision": 4,
+          "layers": {}
+        },
+        "pairing_token": "VECTOR-TOKEN-123456",
+        "ext_pub_hex": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"
+      },
+      "expected": {
+        "phaedo_export_version": "0.1",
+        "mode": "bootstrap",
+        "artifact": {
+          "phaedo_protocol_version": "0.1",
+          "fingerprint_id": "vector-fp-0001",
+          "subject_id": "vector-subj-0001",
+          "schema_revision": 4,
+          "layers": {}
+        },
+        "pairing_token": "VECTOR-TOKEN-123456",
+        "ext_pub": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+        "digest": "6Zh-fEiRD2sZDIaV7lvTOVaFkjUE_bXcJpnKVcbsG2A"
+      }
+    },
+    {
+      "test_id": "T-PHAEDO-EXPORT-0003",
+      "description": "Tamper: the same export with one artifact field altered MUST NOT verify against the recorded digest.",
+      "input": {
+        "artifact": {
+          "phaedo_protocol_version": "0.1",
+          "fingerprint_id": "vector-fp-0001",
+          "subject_id": "vector-subj-EVIL",
+          "schema_revision": 4,
+          "layers": {}
+        },
+        "pairing_token": "VECTOR-TOKEN-123456"
+      },
+      "expected_digest_mismatch_with": "0lkJJGleAEI2n2o-OZe8pDEpdjo62dvoVeS5PQgXkBQ"
+    }
+  ]
+}

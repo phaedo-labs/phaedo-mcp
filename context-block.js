@@ -473,11 +473,53 @@ const INJECT_SOURCE_ALLOW = new Set([
 function sanitizeRuleLine(s) {
   return String(s == null ? '' : s).replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
-function renderOperatingRules(fingerprint) {
+// §5.2 scope activation (v0.2 / OQ5) for domain/task-scoped rules. MIRRORS
+// user-config.js instructionActiveFor (this file is vendored standalone into
+// mcp/vendor/, so it cannot require the §5 module; parity is locked by
+// scripts/test_user_config.mjs). Same substring namespace as the §10.5 resolver:
+// the session's domain/task_hint CONTAINS the rule's scope entry, case-insensitive.
+// Fail-closed: scoped + context known + no match → inactive.
+function scopeActive(rule, sessionContext) {
+  const scope = rule && rule.scope;
+  if (scope !== 'domain' && scope !== 'task') return true;
+  const ctx = sessionContext && typeof sessionContext === 'object' ? sessionContext : {};
+  const hay = scope === 'domain'
+    ? (typeof ctx.domain === 'string' ? ctx.domain.toLowerCase() : '')
+    : (typeof ctx.task_hint === 'string' ? ctx.task_hint.toLowerCase() : '');
+  if (!hay) return false;
+  const keys = scope === 'domain' ? rule.scope_domains : rule.scope_tasks;
+  return (Array.isArray(keys) ? keys : []).some(k => typeof k === 'string' && k && hay.includes(k.toLowerCase()));
+}
+// A scoped rule injected WITHOUT session context gets an explicit conditional
+// prefix — the consuming model activates it contextually (the §5.2 model-mediated
+// branch). A consumer that CAN evaluate scope filters deterministically instead.
+function scopePrefix(rule) {
+  const scope = rule && rule.scope;
+  if (scope === 'domain' && Array.isArray(rule.scope_domains) && rule.scope_domains.length) {
+    return `Only when the session involves ${rule.scope_domains.map(sanitizeRuleLine).join(' or ')}: `;
+  }
+  if (scope === 'task' && Array.isArray(rule.scope_tasks) && rule.scope_tasks.length) {
+    return `Only when the task involves ${rule.scope_tasks.map(sanitizeRuleLine).join(' or ')}: `;
+  }
+  return '';
+}
+function renderOperatingRules(fingerprint, sessionContext) {
+  // Scope semantics (§5.2 v0.2): with session context, scoped rules filter
+  // deterministically (fail-closed); without it, they inject with a conditional
+  // prefix. hasContext is per-scope-relevant field: a context carrying only a
+  // domain still leaves task-scoped rules on the conditional-prefix branch.
+  const ctx = sessionContext && typeof sessionContext === 'object' ? sessionContext : null;
+  const hasDomainCtx = !!(ctx && typeof ctx.domain === 'string' && ctx.domain);
+  const hasTaskCtx = !!(ctx && typeof ctx.task_hint === 'string' && ctx.task_hint);
   const rules = Array.isArray(fingerprint && fingerprint.standing_rules) ? fingerprint.standing_rules : [];
   const seen = new Set();
   const chosen = rules
     .filter(r => r && typeof r.text === 'string' && r.text.trim())
+    .filter(r => {
+      if (r.scope !== 'domain' && r.scope !== 'task') return true;
+      const canEvaluate = r.scope === 'domain' ? hasDomainCtx : hasTaskCtx;
+      return canEvaluate ? scopeActive(r, ctx) : true;   // no context → keep, prefixed below
+    })
     // Curation: the Operating-rules block is for DELIBERATE hard constraints —
     // authored rules + interview-elicited decision rules + act-as-me (delegation) are
     // ALWAYS injected. Auto-promoted style signals (source:'delta_promotion') inject
@@ -506,14 +548,18 @@ function renderOperatingRules(fingerprint) {
   ];
   for (const r of chosen) {
     const exc = typeof r.exception === 'string' && r.exception.trim() ? ` (Exception: ${sanitizeRuleLine(r.exception)})` : '';
-    lines.push(`- ${sanitizeRuleLine(r.text)}${exc}`);
+    // Prefix a scoped rule only when this render could NOT evaluate its scope
+    // (matched-and-filtered rules render plain — the condition already held).
+    const needsPrefix = (r.scope === 'domain' && !hasDomainCtx) || (r.scope === 'task' && !hasTaskCtx);
+    const pre = needsPrefix ? scopePrefix(r) : '';
+    lines.push(`- ${pre}${sanitizeRuleLine(r.text)}${exc}`);
   }
   return lines;
 }
 
 // ─── Context block assembly ───────────────────────────────────────────────────
 
-function buildContextBlock(fingerprint, behavioralSignals = {}, linguisticProfile = {}, cognitiveProfile = null, sessionMetrics = {}, mentalModels = null) {
+function buildContextBlock(fingerprint, behavioralSignals = {}, linguisticProfile = {}, cognitiveProfile = null, sessionMetrics = {}, mentalModels = null, sessionContext = null) {
   const lines = ['<phaedo_user_profile>'];
 
   // ── Framing (2026-07-04): declares the block as background about the subject,
@@ -532,7 +578,7 @@ function buildContextBlock(fingerprint, behavioralSignals = {}, linguisticProfil
   );
 
   // ── 0. Operating rules (authored, user-confirmed — highest priority) ─────────
-  lines.push(...renderOperatingRules(fingerprint));
+  lines.push(...renderOperatingRules(fingerprint, sessionContext));
 
   // ── 1. Response instructions (derived from observed behavioral corrections) ──
   const inst = synthesizeResponseInstructions(behavioralSignals, cognitiveProfile);
@@ -714,6 +760,14 @@ function validateVaultData(vd) {
   }
   for (const k of ['phaedo_behavioral_signals', 'phaedo_linguistic_profile', 'phaedo_session_metrics'])
     if (vd[k] !== undefined && vd[k] !== null && !isPlainObject(vd[k])) errors.push(`${k} must be an object`);
+  // §5 sibling artifact (config home migration, part 2). Shape-guard only — full
+  // §5 conformance is spec/validate-fingerprint.mjs validateUserConfiguration.
+  const cfg = vd.phaedo_user_configuration;
+  if (cfg !== undefined && cfg !== null) {
+    if (!isPlainObject(cfg)) errors.push('phaedo_user_configuration must be an object');
+    else if (cfg.standing_instructions !== undefined && !Array.isArray(cfg.standing_instructions))
+      errors.push('phaedo_user_configuration.standing_instructions must be an array');
+  }
   return { ok: errors.length === 0, empty, errors };
 }
 
@@ -752,14 +806,29 @@ function renderContextBlock(vd, opts) {
     ctxWarn(msg);              // loud, not silent — a malformed producer is a bug
     return '';                 // …but still degrade gracefully (don't crash the page)
   }
-  const fingerprint = vd.phaedo_fingerprint;
+  let fingerprint = vd.phaedo_fingerprint;
   if (!fingerprint) return ''; // v.empty — legitimately nothing to render
+  // §5 canonical when present (config home migration, part 2): the sibling
+  // artifact's standing_instructions REPLACE the A-home standing_rules for this
+  // render. Inline mirror of user-config.js foldStandingInstructions (this file
+  // is vendored standalone); parity locked by scripts/test_context_block.mjs.
+  const cfg = vd.phaedo_user_configuration;
+  if (cfg && typeof cfg === 'object' && Array.isArray(cfg.standing_instructions)) {
+    fingerprint = { ...fingerprint };
+    if (cfg.standing_instructions.length) fingerprint.standing_rules = cfg.standing_instructions;
+    else delete fingerprint.standing_rules;
+  }
   const behavioralSignals = vd.phaedo_behavioral_signals || {};
   const linguisticProfile = vd.phaedo_linguistic_profile || {};
   const sessionMetrics    = vd.phaedo_session_metrics    || {};
   const cognitiveProfile  = synthesizeCognitiveProfile(linguisticProfile, sessionMetrics);
   const mentalModels      = synthesizeMentalModels(linguisticProfile);
-  return buildContextBlock(fingerprint, behavioralSignals, linguisticProfile, cognitiveProfile, sessionMetrics, mentalModels);
+  // §5.2 v0.2 scope activation: a consumer that knows the session's domain /
+  // task_hint (e.g. the MCP injection request's §9.2 session_context) passes it
+  // via opts.sessionContext so scoped rules filter deterministically; without it
+  // they render with a conditional scope prefix.
+  const sessionContext = (opts && opts.sessionContext) || null;
+  return buildContextBlock(fingerprint, behavioralSignals, linguisticProfile, cognitiveProfile, sessionMetrics, mentalModels, sessionContext);
 }
 
 globalThis.PhaedoContext = {

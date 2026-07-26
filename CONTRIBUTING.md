@@ -37,8 +37,8 @@ match what the engine actually emits).
 ```bash
 cd mcp
 npm install
-npm test                      # full server suite (10 suites)
-cd .. && node spec/test-schemas.mjs   # schema conformance (84 checks)
+npm test                      # full server suite
+cd .. && node spec/test-schemas.mjs   # schema conformance
 ```
 
 PRs should keep both green. CI runs the same on every PR.

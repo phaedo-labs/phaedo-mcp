@@ -9,6 +9,10 @@
       "$ref": "https://getphaedo.com/spec/fingerprint.schema.json#/properties/phaedo_fingerprint",
       "description": "The §4 fingerprint document (8 layers, signals, optional consult_policies §10.5)."
     },
+    "phaedo_user_configuration": {
+      "$ref": "https://getphaedo.com/spec/user-configuration.schema.json#/properties/phaedo_user_configuration",
+      "description": "The §5 User Configuration sibling (config home migration, part 2). CANONICAL for authored rules when present: consumers read its standing_instructions INSTEAD of the fingerprint A-home standing_rules (dual-home lockstep — the reference SW re-derives it on every vault write). Paired to the fingerprint via fingerprint_id (§5.4)."
+    },
     "phaedo_behavioral_signals": {
       "type": "object",
       "description": "Cross-session accumulated behavioral signals feeding the layers (per-layer map; producer-internal shape in v0.1)."

@@ -29,7 +29,7 @@ const PAIR_KEY_B64 = b64uEnc(new Uint8Array(32).fill(7));   // deterministic per
 console.log('\nbuildReceiptsDeposit (digest round-trip)');
 {
   const r1 = buildReceipt({
-    via: 'phaedo_consult', agentId: 'agent-A',
+    via: 'phaedo_consult', agentId: 'agent-A', clientId: 'c_ATFQrFdTjo',
     request: { consultation_type: 'action_approval', action_descriptor: { domain: 'financial', reversible: false, magnitude: 'high', amount: 12000, summary: 'wire $12k' } },
     response: { signal: 'escalate', confidence: 0.78, deference_level: 'high' },
     drivers: [{ cue: 'irreversibleCaution', lean: 0.6, confidence: 0.8, basis: 'observed' }],
@@ -58,7 +58,47 @@ console.log('\nbuildReceiptsDeposit (digest round-trip)');
   ok(d1, 'first receipt is present in digest');
   ok(d1.response?.signal === 'escalate' && d1.request?.action_descriptor?.summary === 'wire $12k', 'render fields preserved');
   ok(!('drivers' in d1), 'drivers (local provenance) stripped from digest — §10.4 boundary holds toward the phone');
+  // §10.5: the SERVING client rides the digest so the phone — which issued the id and
+  // holds the registry — can name who actually acted, rather than only echoing the
+  // vendor string the caller claimed about itself.
+  ok(d1.client_id === 'c_ATFQrFdTjo', 'serving client_id rides the digest');
+  ok(d1.agent_id === 'agent-A' && d1.client_id !== d1.agent_id, 'claimed agent_id and serving client_id stay distinct on the wire');
+  const d2 = inner.data.receipts.find((r) => r.receipt_id === r2.receipt_id);
+  ok(d2.client_id === null, 'an unpaired-resolver receipt carries client_id: null (older receipts degrade cleanly)');
   ok(d1.user_action === null, 'digest carries user_action so the phone can show already-marked entries');
+
+  // Agreement rides the same digest so the subject can see how closely the oracle
+  // is tracking them without a terminal.
+  ok(inner.data?.agreement && typeof inner.data.agreement === 'object', 'digest carries the agreement summary');
+  ok(inner.data.agreement.overall && typeof inner.data.agreement.overall.scored === 'number', 'agreement carries an overall bucket');
+  const agreeWire = JSON.stringify(inner.data.agreement);
+  ok(!agreeWire.includes('drivers') && !agreeWire.includes('wire $12k') && !agreeWire.includes('irreversibleCaution'),
+    'agreement summary carries counts only — no descriptor text, no driver cues');
+}
+
+// The rate is a property of the WHOLE store, not of the capped digest head. If it
+// were computed from the head, a subject with a long history would see the metric
+// silently redefine itself once they crossed the cap.
+console.log('\nagreement is computed over the whole store, not the digest head');
+{
+  const pairKey = new Uint8Array(32).fill(7);
+  const fpSyncKey = await Kdf.deriveFpSyncKey(pairKey);
+  const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const mk = (action) => {
+    const r = buildReceipt({
+      via: 'phaedo_consult', agentId: 'a',
+      request: { consultation_type: 'action_approval', action_descriptor: { domain: 'writing', reversible: true, magnitude: 'low' } },
+      response: { signal: 'proceed', confidence: 0.6, deference_level: 'medium' },
+    });
+    return { ...r, created_at: old, user_action: action };
+  };
+  // 8 marked receipts, but a digest cap of 2 — the rate must still see all 8.
+  const many = Array.from({ length: 8 }, () => mk('approved'));
+  const { envelope: env } = await buildReceiptsDeposit(PAIR_KEY_B64, many, { cap: 2 });
+  const inner2 = JSON.parse(new TextDecoder().decode(await Envelope.unwrap(env, fpSyncKey)));
+  ok(inner2.data.receipts.length === 2, 'digest head honours the cap');
+  ok(inner2.data.agreement.overall.scored === 8, `agreement scores the whole store — got ${inner2.data.agreement.overall.scored}`);
+  ok(inner2.data.agreement.overall.rate === 1, 'all-approved history → rate 1');
 }
 
 // --- parseMarksDeposit: phone → MCP marks round-trip ---

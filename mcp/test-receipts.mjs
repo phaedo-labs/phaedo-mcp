@@ -44,6 +44,18 @@ ok(r1.response.signal === 'escalate' && r1.response.confidence === 0.78, 'respon
 ok(r1.user_action === null, 'user_action null at write time');
 ok(!('rationale_hint' in r1.response) && !JSON.stringify(r1).includes('layers'), 'receipt carries signals + descriptor only (no hint text, no layer content)');
 
+// §10.5/§10.6: the two identities, believed to different degrees. `agent_id` is what
+// the caller CLAIMED; `client_id` is the paired client that actually SERVED it — the
+// one `agents` scoping matches on. The audit needs both to spot a disagreement.
+{
+  const rc = buildReceipt({ via: 'phaedo_consult', agentId: 'vendor_says_this', clientId: 'c_ATFQrFdTjo', request: REQ, response: RESP });
+  ok(rc.client_id === 'c_ATFQrFdTjo', 'serving client_id recorded');
+  ok(rc.agent_id === 'vendor_says_this' && rc.client_id !== rc.agent_id, 'claimed agent_id and serving client_id are recorded independently');
+  ok(buildReceipt({ via: 'phaedo_consult', request: REQ, response: RESP }).client_id === null, 'client_id is null when the resolver is unpaired');
+  ok(buildReceipt({ via: 'phaedo_consult', clientId: 42, request: REQ, response: RESP }).client_id === null, 'a non-string client_id is coerced to null, never recorded raw');
+  ok(buildReceipt({ via: 'phaedo_consult', clientId: '', request: REQ, response: RESP }).client_id === null, 'an empty client_id is null, not ""');
+}
+
 // a receipt for an ABSTAIN resolution (from the real resolver)
 const sparseVd = { phaedo_fingerprint: { persona_strength: 0.3, layers: {} } };
 const abstain = resolveConsultationCore(sparseVd, { consultation_type: 'action_approval', action_descriptor: { domain: 'x' } });
@@ -73,7 +85,12 @@ console.log('\nencrypted store');
   ok(await updateUserAction(dir, r1.receipt_id, 'rejected'), 'update by receipt_id → true');
   const after = (await readReceipts(dir))[0];
   ok(after.user_action === 'rejected', 'user_action set');
-  ok(JSON.stringify({ ...after, user_action: null }) === beforeUpdate, 'EVERY other field byte-identical after the update');
+  ok(typeof after.user_action_at === 'string' && Number.isFinite(Date.parse(after.user_action_at)),
+     'user_action_at stamped alongside it (§10.6 — written WITH user_action and only with it)');
+  // The mutation is user_action + its timestamp, and nothing else. Strip exactly those
+  // two and the receipt must be byte-identical to what was written.
+  const { user_action_at: _stamp, ...rest } = after;
+  ok(JSON.stringify({ ...rest, user_action: null }) === beforeUpdate, 'EVERY other field byte-identical after the update');
   ok(!(await updateUserAction(dir, 'no-such-id', 'approved')), 'unknown receipt_id → false');
   let threw = null; try { await updateUserAction(dir, r1.receipt_id, 'shredded'); } catch (e) { threw = e; }
   ok(threw && /user_action must be one of/.test(threw.message), 'invalid action rejected');
@@ -147,7 +164,24 @@ console.log('\nmarkOutcome (makes agreement live)');
   // the payoff: agreement is now live for this store (proceed↔approved ✓, decline↔rejected ✓)
   const { computeAgreement } = await import('./agreement.js');
   const rep = computeAgreement(back);
-  ok(rep.domains.financial.scored === 2 && rep.domains.financial.rate === 1, 'agreement now LIVE: 2 scored, both agree → rate 1.0 (was awaiting_user_action before marking)');
+  // Keyed by the CANONICAL domain: both receipts were written with `financial`, which
+  // the §10.2 vocabulary resolves to `finance`. That merge is the point — before it,
+  // `finance` and `financial` were two evidence classes and neither reached §10.7's
+  // thresholds (see docs/roadmap/domain-identity-2026-07-22.md).
+  ok(rep.domains.finance.scored === 2 && rep.domains.finance.rate === 1, 'agreement now LIVE: 2 scored, both agree → rate 1.0 (was awaiting_user_action before marking)');
+  ok(rep.domains.financial === undefined, 'and nothing is left under the alias — one class, not two');
+
+  // The merge itself, stated directly: two spellings of one domain accumulate together.
+  {
+    const spellings = ['finance', 'financial', 'FINANCE ', 'money'].map((d) => buildReceipt({
+      via: 'phaedo_consult',
+      request: { consultation_type: 'action_approval', action_descriptor: { domain: d } },
+      response: { signal: 'proceed', confidence: 0.6, deference_level: 'medium' },
+    }));
+    ok(new Set(spellings.map((r) => r.request.action_descriptor.domain)).size === 1,
+      'four spellings of one domain produce ONE evidence key');
+    ok(spellings[0].request.action_descriptor.domain === 'finance', 'and that key is the canonical term');
+  }
 }
 
 console.log(`\n✓ receipts: ${pass} checks passed`);

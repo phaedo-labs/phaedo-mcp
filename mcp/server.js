@@ -16,12 +16,16 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
-import { loadFingerprint, loadFingerprintPreferCache } from './fingerprint-source.js';
-import { hasPairingRecord, loadPairingRecord } from './phone-source.js';
+import { loadFingerprint, loadFingerprintPreferCache, sourceOf } from './fingerprint-source.js';
+import { hasPairingRecord, loadPairingRecord, readServingClientId } from './phone-source.js';
 import { depositDelegationSuggestions } from './delegation-sync.js';
 import { depositReceiptsDigest, drainAndApplyMarks } from './receipts-sync.js';
 import { buildDelegationPromotions } from './consult-core.js';
+import { buildAutonomyPromotions } from './autonomy-promotion.js';
 import { depositEscalation, pollEscalationOnce, shouldEscalate, loadEscalationPolicy } from './escalation.js';
+import { buildIntentMandatePayload } from './ap2.js';
+import { depositSignRequest, pollSignOnce } from './signing-request.js';
+import { buildSigningAuditRecord, appendSigningAudit } from './signing-audit.js';
 import { buildInjectionResponse, errorResponse, PhaedoError } from './projection.js';
 import { resolveConsultation, checkAuthorization, consultOptsFromEnv, CONSULTATION_TYPES, consultDrivers, deriveDelegationSignals, withDelegationSignals, authoredDelegationSignals } from './consult.js';
 import { defaultStateDir } from './cache.js';
@@ -35,11 +39,45 @@ const BASE_DIR = dirname(fileURLToPath(import.meta.url));
 const RECEIPTS_CAP = receiptsCapFromEnv(process.env);
 async function emitReceipt(via, args, response, drivers) {
   try {
-    const receipt = buildReceipt({ via, agentId: args?.agent_id, request: args, response, drivers });
+    // `clientId` is what the audit can actually rely on: the paired client that
+    // SERVED this call, versus `agentId` — the vendor string the caller claimed.
+    // Recording both is the point; they are believed to different degrees.
+    const receipt = buildReceipt({ via, agentId: args?.agent_id, clientId: CONSULT_OPTS.clientId, request: args, response, drivers });
     await appendReceipt(defaultStateDir(), receipt, { cap: RECEIPTS_CAP });
   } catch (e) {
     process.stderr.write(`[phaedo-mcp] receipt write failed (consultation still answered): ${e.message}\n`);
   }
+}
+
+// Effects that let an agent act with LESS oversight. Only these are withheld when the read
+// is stale; a restrictive effect keeps applying, because a guardrail the subject may since
+// have removed still fails in the safe direction.
+const EXPANDING_SIGNALS = new Set(['proceed', 'autoproceed', 'bias_bold']);
+
+/**
+ * Downgrade an authority-EXPANDING answer that was computed from a stale (cached) read.
+ * Returns the response unchanged for a live read, or for any answer that already defers.
+ * Always annotates provenance so the caller can SAY where the answer came from — the
+ * silence is what let a stale "you're authorized" go unnoticed for a day.
+ */
+function withStaleAuthorityGuard(response, vd) {
+  const src = sourceOf(vd);
+  const out = { ...response };
+  const hours = src.ageMs != null ? Math.round(src.ageMs / 3600000) : null;
+  out.profile_source = src.live
+    ? { live: true }
+    : { live: false, cached_age_hours: hours, note: 'Answered from a cached profile — the subject\'s device could not be reached.' };
+  if (src.live) return out;
+  if (!EXPANDING_SIGNALS.has(String(response?.signal))) return out;
+
+  out.signal = 'escalate';
+  out.authorization_matched = false;
+  out.stale_downgrade = true;
+  out.rationale_hint =
+    `Withheld: this would have proceeded automatically, but the decision was computed from a cached copy of the ` +
+    `subject's profile${hours != null ? ` about ${hours}h old` : ''} because their device could not be reached. ` +
+    `A pre-approval that may since have been revoked must not be acted on unattended — ask the subject.`;
+  return out;
 }
 
 // Load the fingerprint for a consult and fold in the act-as-me channel: delegation
@@ -115,16 +153,26 @@ async function maybePullPhoneMarks() {
 async function maybeDepositDelegationPromotions(vd) {
   try {
     if (!hasPairingRecord(BASE_DIR)) return;                       // no extension to deposit to
-    const promos = buildDelegationPromotions(await readReceipts(defaultStateDir()), (vd && vd.phaedo_fingerprint) || {});
+    const receipts = await readReceipts(defaultStateDir());
+    const fp = (vd && vd.phaedo_fingerprint) || {};
+    // Two channels over one deposit. Delegation promotions learn from the subject's
+    // DISAGREEMENTS and can only make the agent more deferential; autonomy promotions
+    // (§10.7) learn from deliberate, repeated AGREEMENT and are the only channel that
+    // can propose less friction — bounded, binding-gated and expiring, and still only
+    // a proposal the subject endorses.
+    const promos = buildDelegationPromotions(receipts, fp)
+      .concat(buildAutonomyPromotions(receipts, fp));
     if (!promos.length) return;
-    const sig = promos.map(p => `${p.decision?.dimension}|${p.decision?.domain || ''}|${p.decision?.value}`).sort().join(',');
+    const sig = promos.map(p => p.source === 'autonomy_promotion'
+      ? `auto|${(p.match?.domains || []).join('+')}|${p.match?.magnitude_max}`
+      : `${p.decision?.dimension}|${p.decision?.domain || ''}|${p.decision?.value}`).sort().join(',');
     if (sig === _lastDepositSig) return;                           // identical set already deposited — skip the relay round-trip
     const res = await depositDelegationSuggestions(await loadPairingRecord(BASE_DIR), promos);
     if (res && res.deposited) _lastDepositSig = sig;               // latch only on success, so a failed deposit retries next consult
     else if (res && !res.deposited)                                // promotions existed but didn't land — say why (don't fail silently)
-      process.stderr.write(`[phaedo-mcp] ${promos.length} delegation promotion(s) ready but deposit skipped: ${res.reason || 'http ' + res.status}${res.reason === 'no-relay-device-id' ? ' — pairing has no relay lane (local-only pairing)' : ''}\n`);
+      process.stderr.write(`[phaedo-mcp] ${promos.length} rule promotion(s) ready but deposit skipped: ${res.reason || 'http ' + res.status}${res.reason === 'no-relay-device-id' ? ' — pairing has no relay lane (local-only pairing)' : ''}\n`);
   } catch (e) {
-    process.stderr.write(`[phaedo-mcp] delegation promotion deposit skipped: ${e.message}\n`);
+    process.stderr.write(`[phaedo-mcp] rule promotion deposit skipped: ${e.message}\n`);
   }
 }
 
@@ -145,6 +193,11 @@ if (existsSync(POLICIES_PATH)) {
   try { CONSULT_OPTS.policies = JSON.parse(readFileSync(POLICIES_PATH, 'utf8')); }
   catch (e) { process.stderr.write(`[phaedo-mcp] ignoring malformed consult policies (${POLICIES_PATH}): ${e.message}\n`); }
 }
+// §10.5 `agents`: this process's OWN paired-client identity, resolved once at startup.
+// One server serves one paired client, so it never asks a caller who is calling — it
+// reads who it IS. Null (unpaired / unreadable) makes `agents`-scoped RELAXING rules
+// inert, which is the fail-safe direction; the server still answers everything else.
+CONSULT_OPTS.clientId = readServingClientId(BASE_DIR);
 
 // Escalation PUSH policy (which signals wake the subject): the subject-configurable knob
 // over the stakes-gated default. Local file (PHAEDO_ESCALATION_POLICY, else
@@ -172,6 +225,7 @@ server.registerTool(
       session_context: z
         .object({
           platform: z.string().optional(),
+          domain: z.string().optional(),
           task_hint: z.string().optional(),
           audience_hint: z.string().optional(),
           max_tokens: z.number().optional(),
@@ -205,6 +259,24 @@ server.registerTool(
   }
 );
 
+// §10.2 `action_binding` — the concrete call the action_descriptor claims to
+// describe. Optional and back-compatible: an unbound request resolves exactly as
+// before. Shared by phaedo_consult / phaedo_check_authorization / phaedo_escalate
+// so the three can't drift. See mcp/action-binding.js for why this exists.
+const ACTION_BINDING_SCHEMA = z
+  .object({
+    tool_name: z.string().describe('The tool/function the agent is about to invoke.'),
+    arguments_hash: z.string().describe('Hex or base64url digest over the RFC 8785 canonical form of the arguments. Never the arguments themselves.'),
+    arguments_preview: z.string().optional().describe('Optional short human-readable summary of the arguments, shown to the subject on an escalation.'),
+  })
+  .optional()
+  .describe(
+    'Binds this consultation to the concrete call it describes. The action_descriptor is your ACCOUNT of the action; ' +
+    'this is the action. Recorded on the audit receipt so a later mismatch is provable, shown to the subject when an ' +
+    'escalation reaches their phone, and REQUIRED by any standing rule the subject marked require_binding before it ' +
+    'will auto-proceed.',
+  );
+
 // ── Tool: phaedo_consult (binding §3.2, spec §10) ─────────────────────────────
 // Agent consultation: query the fingerprint at a decision point and get back a
 // constrained SIGNAL (§10.3) — never layer content (§10.4 boundary). One tool,
@@ -235,6 +307,7 @@ server.registerTool(
           summary: z.string().optional(),
         })
         .optional(),
+      action_binding: ACTION_BINDING_SCHEMA,
       context: z.record(z.any()).optional(),
     },
     // Not read-only: appends a local §10.6 audit receipt and may best-effort deposit a
@@ -298,6 +371,7 @@ server.registerTool(
           summary: z.string().optional(),
         })
         .optional(),
+      action_binding: ACTION_BINDING_SCHEMA,
     },
     // Deterministic pre-flight; appends a local audit receipt. Non-destructive, device-local.
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
@@ -306,7 +380,14 @@ server.registerTool(
     try {
       const req = { consultation_type: 'action_approval', ...(args || {}) };
       const vd = await loadFingerprint(BASE_DIR);
-      const response = checkAuthorization(vd, req, CONSULT_OPTS);
+      // STALENESS MAY NOT EXPAND AUTONOMY. When the live pull failed we are answering from
+      // an at-rest cache that predates anything the subject has changed since — including a
+      // REVOCATION. Observed on device 2026-07-25: a revoked $500 payment grant kept
+      // returning "authorized" from a 22-hour-old copy. A stale read may still make an agent
+      // MORE deferential (that direction is safe and useful phone-absent); it may never be
+      // the basis for proceeding unattended. Same asymmetry as `expires_at`, `require_binding`
+      // and the §10.2 domain aliases: narrow freely, widen never.
+      const response = withStaleAuthorityGuard(checkAuthorization(vd, req, CONSULT_OPTS), vd);
       // A matched pre-flight IS a resolved decision (the authorization fired) →
       // receipt. A no-match is not a decision — no receipt (keeps the store from
       // filling with probes; the follow-up phaedo_consult writes its own).
@@ -423,6 +504,7 @@ server.registerTool(
           summary: z.string().optional(),
         })
         .optional(),
+      action_binding: ACTION_BINDING_SCHEMA,
       context: z.record(z.any()).optional(),
     },
     // Opens a channel to an EXTERNAL entity (the subject's device, via the relay) and
@@ -551,6 +633,177 @@ server.registerTool(
     } catch (err) {
       const code = err instanceof PhaedoError ? err.code : 'request_malformed';
       return { content: [{ type: 'text', text: `Phaedo escalation-status error [${code}]: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+// ── Tool: phaedo_sign_mandate (§8.3 signing ceremony) ─────────────────────────
+// Ask the subject to SIGN an AP2 Intent Mandate built from their standing authorizations.
+// Two-call shape like escalation: this deposits the request and returns immediately with a
+// request_id + the mandate; the agent then polls phaedo_sign_status. The subject signs on
+// their phone inside the Secure Enclave (the server never holds the key). Until a signature
+// comes back the mandate is a PROPOSAL, never a credential — do not present it as authorized.
+const SIGN_WINDOW_MS = 5 * 60 * 1000;
+
+server.registerTool(
+  'phaedo_sign_mandate',
+  {
+    title: 'Ask the subject to sign a payment authorization (AP2 Intent Mandate)',
+    description:
+      'Request the subject\'s cryptographic signature on an AP2 Intent Mandate built from their ' +
+      'standing authorizations — a credential a merchant or payments network can verify. Returns a ' +
+      'request_id and the unsigned mandate immediately; then poll phaedo_sign_status with BOTH, and ' +
+      'DO NOT treat the mandate as authorized until it returns signed. The subject signs on their ' +
+      'phone (Face ID, key in the Secure Enclave); they may also decline. Use only when you need a ' +
+      'verifiable payment credential — not for ordinary consultations.',
+    inputSchema: {
+      agent_id: z.string().optional(),
+      prompt_playback: z.string().optional(),  // your stated understanding of the request (AP2)
+    },
+    // Reaches the subject's device via the relay; read-only w.r.t. local state (no receipt yet).
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+  },
+  async (args) => {
+    try {
+      const vd = await loadConsultVd(BASE_DIR, { preferCache: true });
+      const fp = (vd && vd.phaedo_fingerprint) || {};
+      const mandate = buildIntentMandatePayload(fp, {
+        agentId: args?.agent_id ?? null,
+        promptPlayback: args?.prompt_playback ?? null,
+      });
+      if (!mandate) {
+        const body = {
+          request_type: 'sign_mandate', status: 'nothing_to_sign',
+          message: 'The subject has granted no standing authorizations, so there is nothing to sign. ' +
+                   'An empty mandate must never be synthesized — it would read as unlimited authority.',
+        };
+        return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }], structuredContent: body };
+      }
+
+      // Make sure we hold the subject's signing key BEFORE the sheet goes up.
+      //
+      // Verification needs the published key. Fetching it lazily at poll time meant a live
+      // fingerprint pull fired WHILE the signing sheet was on screen — which puts an
+      // authorize card up right as that sheet dismisses, and iOS kills the app when two of
+      // these sheets overlap ("already presenting"; the nav layer warns about exactly this).
+      // Observed on device: the ceremony completed, then the app crashed and the pull that
+      // would have supplied the key died with it, so a genuine signature came back
+      // unverifiable. Pulling here is free of that hazard — no sheet exists yet — and it
+      // also fails fast, before the subject is asked to sign something we could not check.
+      if (!(vd && vd.phaedo_signing_public_key)) {
+        try { await loadConsultVd(BASE_DIR); } catch { /* best-effort; poll still retries */ }
+      }
+
+      const pairing = await loadPairingRecord(BASE_DIR);
+      const dep = await depositSignRequest(pairing, mandate, { windowMs: SIGN_WINDOW_MS });
+      const body = dep.deposited
+        ? {
+            request_type: 'sign_mandate', status: 'pending',
+            request_id: dep.request_id, window_ms: dep.window_ms, expires_at: dep.expires_at, woke: dep.woke,
+            mandate,
+            message: 'Sent to the subject to sign. Poll phaedo_sign_status with this request_id AND this ' +
+                     'mandate; do not treat it as authorized until it returns signed. If it expires or the ' +
+                     'subject declines, the mandate stays an unsigned proposal.',
+          }
+        : {
+            request_type: 'sign_mandate', status: 'unreachable', reason: dep.reason,
+            message: dep.reason === 'no-relay-device-id' || dep.reason === 'unpaired'
+              ? 'No real-time channel to the subject (no paired device with a relay lane). Cannot obtain a signature.'
+              : 'Could not reach the subject right now. The mandate remains an unsigned proposal.',
+          };
+      return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }], structuredContent: body };
+    } catch (err) {
+      const code = err instanceof PhaedoError ? err.code : 'internal_error';
+      return { content: [{ type: 'text', text: `Phaedo sign-mandate error [${code}]: ${err.message}` }], isError: true };
+    }
+  }
+);
+
+// ── Tool: phaedo_sign_status ──────────────────────────────────────────────────
+// Poll a signing request opened with phaedo_sign_mandate. The `mandate` returned by that
+// call is passed back here to verify against — a tampered mandate simply fails verification
+// (the phone signed only what it displayed), so round-tripping it is safe and restart-proof.
+server.registerTool(
+  'phaedo_sign_status',
+  {
+    title: 'Check whether the subject has signed the mandate',
+    description:
+      'Poll a request from phaedo_sign_mandate. Pass the request_id AND the mandate that call returned. ' +
+      'Returns signed + the mandate carrying the verified signature once the subject signs, refused if ' +
+      'they declined, pending while you should keep waiting, or expired once the window lapsed. A signed ' +
+      'result is verified against the subject\'s published signing key before it is returned.',
+    inputSchema: {
+      request_id: z.string(),
+      mandate: z.record(z.any()),
+      expires_at: z.number().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async (args) => {
+    try {
+      const vd = await loadConsultVd(BASE_DIR, { preferCache: true });
+      let signingPublicKey = vd && vd.phaedo_signing_public_key;
+      // NOTE: no live pull here, deliberately. A live pull raises an authorize card on the
+      // phone, and this runs while the signing sheet may still be dismissing — overlapping
+      // sheets crash iOS ("already presenting"), which is exactly how a good signature was
+      // lost on device. The key is fetched at DEPOSIT time instead (see phaedo_sign_mandate),
+      // where no sheet exists. If it is still missing here, report that honestly rather than
+      // interrupting the subject mid-ceremony to fix it.
+      const pairing = await loadPairingRecord(BASE_DIR);
+      const r = await pollSignOnce(pairing, args.request_id, args.mandate, {
+        expiresAt: args.expires_at, signingPublicKey,
+      });
+
+      // A stale key (the subject rotated their signing identity) would also present as a
+      // plain mismatch. That is NOT retried with a live pull here, on purpose: the pull
+      // raises an authorize card while the signing sheet may still be dismissing, and
+      // overlapping sheets crash iOS. Fetching at DEPOSIT time makes staleness effectively
+      // impossible anyway — the key is read moments before the sheet appears, and rotation
+      // requires a deliberate device action. A genuine mismatch is reported as such.
+
+      if (r.resolved && r.signed) {
+        // Audit the minted credential — its own log, NOT a §10.6 consult receipt (a
+        // signature has no signal and must not feed act-as-me learning). Records a digest
+        // of the signed bytes + coarse metadata, never the mandate content or the signature.
+        // Best-effort: a failed audit write must never make a real signature look unsigned.
+        let recorded = false;
+        try {
+          await appendSigningAudit(defaultStateDir(), buildSigningAuditRecord({
+            requestId: args.request_id, mandate: r.mandate, clientId: CONSULT_OPTS.clientId, agentId: r.mandate?.agent_id,
+          }));
+          recorded = true;
+        } catch (e) {
+          process.stderr.write(`[phaedo-mcp] signing-audit write failed (mandate still signed): ${e.message}\n`);
+        }
+        const body = {
+          request_type: 'sign_status', status: 'signed', mandate: r.mandate, recorded,
+          message: 'The subject signed. The mandate now carries a verified signature and may be presented ' +
+                   'as a credential.',
+        };
+        return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }], structuredContent: body };
+      }
+      if (r.resolved && !r.signed) {
+        const refused = r.reason === 'refused';
+        const body = {
+          request_type: 'sign_status', status: refused ? 'refused' : 'not_signed', reason: r.reason,
+          ...(r.detail ? { detail: r.detail } : {}),
+          message: refused
+            ? 'The subject declined to sign. Do not proceed with an action that needs this credential.'
+            : 'A response arrived but did not verify (' + (r.detail || 'unknown') + '). Treat as unsigned; do not proceed.',
+        };
+        return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }], structuredContent: body };
+      }
+      const expired = r.status === 'expired';
+      const body = {
+        request_type: 'sign_status', status: r.status,
+        message: expired
+          ? 'The signing window lapsed with no signature. The mandate remains an unsigned proposal.'
+          : 'Not signed yet. Keep waiting; poll again shortly.',
+      };
+      return { content: [{ type: 'text', text: JSON.stringify(body, null, 2) }], structuredContent: body };
+    } catch (err) {
+      const code = err instanceof PhaedoError ? err.code : 'request_malformed';
+      return { content: [{ type: 'text', text: `Phaedo sign-status error [${code}]: ${err.message}` }], isError: true };
     }
   }
 );

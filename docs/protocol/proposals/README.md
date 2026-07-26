@@ -1,14 +1,17 @@
-# Protocol Spec Proposals — queued, not normative
+# Protocol Spec Proposals — folded-proposal archive
 
-This directory holds **queued proposals** for changes to the Phaedo Protocol spec
+This directory holds the **proposals** for changes to the Phaedo Protocol spec
 (`../v0.1.md`). Per the consultation build brief's working discipline (§2.5, §11), any
-change to the normative spec is a **proposal first**. Nothing here is in effect until it
-is reviewed and explicitly folded into `v0.1.md` with a change-log entry and (where
-applicable) a `spec/schemas/` update + conformance test.
+change to the normative spec is a **proposal first** — reviewed and explicitly folded into
+`v0.1.md` with a change-log entry and (where applicable) a `spec/schemas/` update +
+conformance test.
 
-**Status of everything in this dir: QUEUED FOR REVIEW. Do not build against a proposal
-as if it were ratified.** The stable, build-against surfaces remain the shapes already
-in `v0.1.md` (§9 injection, §10.2/10.3 consultation request/response, §10.5 policies).
+**Status: all proposals 0001–0008 below are FOLDED / COMPLETE** — each index row links the
+version it landed in (the one still-open item is `0003`'s B-half, the §5 configuration home,
+targeted for v0.2). This dir is now the folded-proposal archive; the review discipline above
+still governs any *new* proposal, which stays queued until folded. The stable, build-against
+surfaces are the shapes in `v0.1.md` (§9 injection, §10.2/10.3 consultation request/response,
+§10.5 policies).
 
 ## Index (queued 2026-06-09, from the consultation build brief §11)
 
@@ -21,7 +24,7 @@ in `v0.1.md` (§9 injection, §10.2/10.3 consultation request/response, §10.5 p
 | 0005 | Vault-data (`vd`) contract | new informative appendix | ✅ **FOLDED v0.1.12** — Appendix C + `vault-data.schema.json` + consultation-boundary guard + snapshot fixtures. |
 | 0006 | Conflict resolution + provenance | new §4.7 | ✅ **FOLDED v0.1.20; FULLY INTEGRATED v0.1.24–v0.1.28** — deterministic evidence-tier resolution + ≥3 floor → `unresolved` (`resolveDimension()`/`resolveLayer()` + TC-RESOLVE vectors), then a reviewable `conflict_records[]` queue (v0.1.24), **injection suppression** of open-conflict dimensions (v0.1.27), and the symmetric **consult suppression** (v0.1.28, `mcp/consult-core.js`). Closes the autonomy-class defect; provenance = the `signals[]` log (no wire change). |
 | 0007 | Authored decision rules (one home: `standing_rules`) | §4.3/§4.7 + §5.2 + §9 + §10.5 | ✅ **FOLDED v0.1.21 (2026-06-17, rev. 3).** One authored home `standing_rules[]` (§5.2 shape, A-home) with a `kind: instruction \| authorization` discriminator — realizes 0003's model and supersedes the standalone `consult_policies` (kept as a deprecated read-path alias, migrated). Instruction = verbatim rule + optional `decision` binding (marks DR dimension authored-canonical, §4.7); authorization = §10.5 matcher→effect gate. Renders §9.1's unbuilt standing-instruction projection. **Rejects** an in-layer evidence tier (rev. 1, §4.6/§5 confusion) and standalone `anchors[]`. Diffs: `0007-schema-diffs.md`; onboarding bank: `0007-onboarding-decision-rules.json`. **§E delta promotion** folded v0.1.22 and **fully wired 2026-06-19** — `promoteRules()` now runs in the live extraction pass (`extraction/offscreen-runner.js`/`orchestrator.js`) and the review surface moved to the extension popup ("Rules to review" card + shared attention dot; the interview `Review.jsx` was removed). |
-| 0008 | Fingerprint sync mailbox (offline-tolerant, two-way) | new relay mailbox + §8 sync | ✅ **COMPLETE — device-verified, merged 2026-06-18 (PRs #39–#41).** Relay store-and-forward mailbox (`relay/mailbox.js`) holds ciphertext-only fingerprints under `fp_sync_key = HKDF(pair_key)`; clients drain on reconnect (no simultaneous liveness). Directions `to_ext` (phone→ext), `to_phone` (ext→phone), and **`agent_to_ext`** (a paired agent → ext, added v0.1.32 for the act-as-me delegation-suggestion deposit — Proposal 0007 §E / delegation promotion). Authored-content union merge so a rule is never clobbered by whole-fp LWW; separate `rules_updated_at` clock (#41). Spec ref: `docs/protocol/v0.1.md`. |
+| 0008 | Fingerprint sync mailbox (offline-tolerant, two-way) | new relay mailbox + §8 sync | ✅ **COMPLETE — device-verified, merged 2026-06-18 (PRs #39–#41).** Relay store-and-forward mailbox (`relay/mailbox.js`) holds ciphertext-only fingerprints under `fp_sync_key = HKDF(pair_key)`; clients drain on reconnect (no simultaneous liveness). Directions `to_ext` (phone→ext), `to_phone` (ext→phone), **`agent_to_ext`** (a paired agent → ext, added v0.1.32 for the act-as-me delegation-suggestion deposit — Proposal 0007 §E / delegation promotion), and the receipts-audit-digest lanes **`agent_to_phone`** / **`phone_to_agent`** (v0.1.38–39: MCP deposits a §10.4-safe receipts digest, phone deposits outcome marks back). Authored-content union merge so a rule is never clobbered by whole-fp LWW; separate `rules_updated_at` clock (#41). Spec ref: `docs/protocol/v0.1.md`. |
 
 ## Review gate (what folding a proposal in requires)
 

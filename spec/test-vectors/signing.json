@@ -1,0 +1,38 @@
+{
+  "category": "TC-SIGN",
+  "describes": "§8.3 asymmetric signing — ES256 (ECDSA P-256 / SHA-256) verification",
+  "note": "ECDSA signing is RANDOMIZED, so — like TC-ENV — these are VERIFY-direction known-answer vectors, not sign-direction ones. A conforming verifier MUST reproduce every expect_verify below. The signature covers the §6 RFC 8785 canonical form of `payload` with the `field` omitted (see signing_input). Keys and signatures are base64. An implementation proves the sign direction by round-tripping its own output; it proves interop by verifying these fixed vectors.",
+  "vectors": [
+    {
+      "test_id": "T-PHAEDO-SIGN-0001",
+      "description": "A genuine ES256 signature over the canonical mandate verifies",
+      "field": "signature",
+      "encoding": "der",
+      "payload": { "mandate_type": "intent", "amount": 500, "currency": "USD", "domain": "finance", "signature": null },
+      "signing_input": "{\"amount\":500,\"currency\":\"USD\",\"domain\":\"finance\",\"mandate_type\":\"intent\"}",
+      "public_key_b64": "BIjTlnzhC+Mv1lg1DIDfhm5wgjP+O6e/nh1flS22cv3PGOS+DqgQ60PBdgZ9cskOGG7tvJv+dwcv09dGJA7/Vhw=",
+      "signature_b64": "MEUCIEXH+r3NJQlyPYswR4iGpcJVJnxSxoOkJcefDb+6WhSXAiEAs/qTvODC+1pN7pQya60E9hSbWAGAndMq9HDL/YYtYJw=",
+      "expect_verify": true
+    },
+    {
+      "test_id": "T-PHAEDO-SIGN-0002",
+      "description": "The same signature does NOT verify once a term is changed (500 → 5000000) — sign-what-you-see",
+      "field": "signature",
+      "encoding": "der",
+      "payload": { "mandate_type": "intent", "amount": 5000000, "currency": "USD", "domain": "finance", "signature": null },
+      "public_key_b64": "BIjTlnzhC+Mv1lg1DIDfhm5wgjP+O6e/nh1flS22cv3PGOS+DqgQ60PBdgZ9cskOGG7tvJv+dwcv09dGJA7/Vhw=",
+      "signature_b64": "MEUCIEXH+r3NJQlyPYswR4iGpcJVJnxSxoOkJcefDb+6WhSXAiEAs/qTvODC+1pN7pQya60E9hSbWAGAndMq9HDL/YYtYJw=",
+      "expect_verify": false
+    },
+    {
+      "test_id": "T-PHAEDO-SIGN-0003",
+      "description": "A corrupted signature does not verify",
+      "field": "signature",
+      "encoding": "der",
+      "payload": { "mandate_type": "intent", "amount": 500, "currency": "USD", "domain": "finance", "signature": null },
+      "public_key_b64": "BIjTlnzhC+Mv1lg1DIDfhm5wgjP+O6e/nh1flS22cv3PGOS+DqgQ60PBdgZ9cskOGG7tvJv+dwcv09dGJA7/Vhw=",
+      "signature_b64": "MEUCIEXH+r3NJQlyPYswR4iGpcJUJnxSxoOkJcefDb+6WhSXAiEAs/qTvODC+1pN7pQya60E9hSbWAGAndMq9HDL/YYtYJw=",
+      "expect_verify": false
+    }
+  ]
+}

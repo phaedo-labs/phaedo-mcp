@@ -12,6 +12,7 @@ import { readFile } from 'fs/promises';
 import { resolve } from 'path';
 import { hasPairingRecord, loadPairingRecord, loadFingerprintFromPhone, PhoneError } from './phone-source.js';
 import { defaultStateDir, writeCache, readCache, clearCache } from './cache.js';
+import { foldLocalCapture, isLocalCaptureOwner } from './capture-local.js';
 
 // §4.1 protocol-identity normalization (consumer defense-in-depth, 2026-06-16).
 // A stored fingerprint from a producer that predates identity stamping (or whose
@@ -52,6 +53,35 @@ function resolveSourcePath(baseDir) {
 //     phaedo_session_metrics }
 // Throws on unreadable/invalid source — the tool layer maps that to
 // decryption_failed (the §9.5 "couldn't obtain plaintext fingerprint" case).
+// PROVENANCE. A cache fallback used to be indistinguishable from a live phone read — same
+// object, same shape, no marker anywhere — so an agent answered "yes, you're pre-approved"
+// from a 22-hour-old snapshot with total confidence, and `pull.js` printed "Read your
+// profile from the phone" either way. There was no signal to notice. Callers that make
+// AUTHORITY decisions must be able to tell the difference.
+//
+// Carried on a SYMBOL deliberately: it never serializes, never reaches a schema, never rides
+// a sync, and cannot be mistaken for spec'd fingerprint content. It is a fact about THIS
+// read, not about the artifact.
+export const SOURCE = Symbol('phaedo.fingerprint.source');
+
+function stamp(vd, cached) {
+  if (!vd || typeof vd !== 'object') return vd;
+  const cachedAt = Number(cached?.cachedAt) || null;   // readCache returns { vault, cachedAt }
+  try {
+    Object.defineProperty(vd, SOURCE, {
+      value: { live: false, cachedAt, ageMs: cachedAt ? Date.now() - cachedAt : null },
+      enumerable: false, configurable: true, writable: true,
+    });
+  } catch { /* frozen object — provenance is best-effort, never fatal */ }
+  return vd;
+}
+
+/** Provenance of a loaded fingerprint. Absent marker → a live read. */
+export function sourceOf(vd) {
+  const s = vd && vd[SOURCE];
+  return s || { live: true, cachedAt: null, ageMs: 0 };
+}
+
 export async function loadFingerprint(baseDir) {
   // Explicit local source wins over phone pairing: if PHAEDO_FINGERPRINT names a
   // file, honor it and skip the phone entirely. Pointing at a concrete fingerprint
@@ -81,7 +111,7 @@ export async function loadFingerprint(baseDir) {
         throw err;
       }
       const cached = await readCache(stateDir);
-      if (cached) return normalizeIdentity(cached.vault); // phone unreachable → encrypted cache (may be stale)
+      if (cached) return stamp(normalizeIdentity(cached.vault), cached); // phone unreachable → encrypted cache (may be stale)
       throw err;                        // no phone + no cache → cannot serve
     }
   }
@@ -97,6 +127,16 @@ export async function loadFingerprint(baseDir) {
   const vd = JSON.parse(raw);
   if (!vd || typeof vd !== 'object' || !vd.phaedo_fingerprint) {
     throw new Error(`Fingerprint source at ${path} is missing phaedo_fingerprint.`);
+  }
+  // mcp-local capture tier (desktop-capture-deposit.md §4 tier 3): unpaired,
+  // phone-less serving is the one configuration where NOBODY else drains what the
+  // capture hook accumulated on this machine — fold its local state into the
+  // served fingerprint at read time (capture-local.js; read-time overlay, no
+  // persistence, idempotent). Owner-gated: a paired setup never reaches this
+  // branch, and an explicit PHAEDO_FINGERPRINT ("use THIS file") stays verbatim —
+  // it is the hermetic-test escape hatch.
+  if (!process.env.PHAEDO_FINGERPRINT && await isLocalCaptureOwner(hasPairingRecord(baseDir))) {
+    return normalizeIdentity(await foldLocalCapture(vd));
   }
   return normalizeIdentity(vd);
 }
@@ -129,7 +169,7 @@ export async function loadFingerprint(baseDir) {
 export async function loadFingerprintPreferCache(baseDir) {
   if (!process.env.PHAEDO_FINGERPRINT && hasPairingRecord(baseDir)) {
     const cached = await readCache(defaultStateDir());
-    if (cached) return normalizeIdentity(cached.vault);
+    if (cached) return stamp(normalizeIdentity(cached.vault), cached);
   }
   return loadFingerprint(baseDir);
 }

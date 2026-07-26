@@ -53,6 +53,170 @@
         "signal": "insufficient_signal",
         "deference_level": "low"
       }
+    },
+    {
+      "test_id": "T-PHAEDO-CONS-0004",
+      "description": "require_binding autoproceed FIRES for a request bound to a concrete call (§10.2/§10.5)",
+      "vault": "inline",
+      "vault_data": {
+        "phaedo_fingerprint": {
+          "persona_strength": 0.3,
+          "layers": {},
+          "standing_rules": [
+            {
+              "instruction_id": "auth-writing",
+              "kind": "authorization",
+              "match": {
+                "domains": [
+                  "writing"
+                ],
+                "magnitude_max": "medium",
+                "reversible": true
+              },
+              "effect": "autoproceed",
+              "require_binding": true,
+              "note": "low-stakes writing is pre-approved"
+            },
+            {
+              "instruction_id": "esc-money",
+              "kind": "authorization",
+              "match": {
+                "domains": [
+                  "financial"
+                ],
+                "reversible": false
+              },
+              "effect": "escalate",
+              "require_binding": true,
+              "note": "irreversible money goes to a human"
+            }
+          ]
+        }
+      },
+      "request": {
+        "consultation_type": "action_approval",
+        "action_descriptor": {
+          "domain": "writing",
+          "reversible": true,
+          "magnitude": "low",
+          "summary": "Draft a reply."
+        },
+        "action_binding": {
+          "tool_name": "draft_email",
+          "arguments_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "arguments_preview": "to=team, subject=status"
+        }
+      },
+      "expected": {
+        "signal": "proceed",
+        "deference_level": "high"
+      }
+    },
+    {
+      "test_id": "T-PHAEDO-CONS-0005",
+      "description": "the SAME autoproceed rule is withheld for an UNBOUND request — the descriptor alone cannot unlock autonomy the subject gated on a binding",
+      "vault": "inline",
+      "vault_data": {
+        "phaedo_fingerprint": {
+          "persona_strength": 0.3,
+          "layers": {},
+          "standing_rules": [
+            {
+              "instruction_id": "auth-writing",
+              "kind": "authorization",
+              "match": {
+                "domains": [
+                  "writing"
+                ],
+                "magnitude_max": "medium",
+                "reversible": true
+              },
+              "effect": "autoproceed",
+              "require_binding": true,
+              "note": "low-stakes writing is pre-approved"
+            },
+            {
+              "instruction_id": "esc-money",
+              "kind": "authorization",
+              "match": {
+                "domains": [
+                  "financial"
+                ],
+                "reversible": false
+              },
+              "effect": "escalate",
+              "require_binding": true,
+              "note": "irreversible money goes to a human"
+            }
+          ]
+        }
+      },
+      "request": {
+        "consultation_type": "action_approval",
+        "action_descriptor": {
+          "domain": "writing",
+          "reversible": true,
+          "magnitude": "low",
+          "summary": "Draft a reply."
+        }
+      },
+      "expected": {
+        "signal": "insufficient_signal",
+        "deference_level": "low"
+      }
+    },
+    {
+      "test_id": "T-PHAEDO-CONS-0006",
+      "description": "require_binding NEVER disables a restrictive rule: an escalate authorization still fires unbound (authority-narrowing only)",
+      "vault": "inline",
+      "vault_data": {
+        "phaedo_fingerprint": {
+          "persona_strength": 0.3,
+          "layers": {},
+          "standing_rules": [
+            {
+              "instruction_id": "auth-writing",
+              "kind": "authorization",
+              "match": {
+                "domains": [
+                  "writing"
+                ],
+                "magnitude_max": "medium",
+                "reversible": true
+              },
+              "effect": "autoproceed",
+              "require_binding": true,
+              "note": "low-stakes writing is pre-approved"
+            },
+            {
+              "instruction_id": "esc-money",
+              "kind": "authorization",
+              "match": {
+                "domains": [
+                  "financial"
+                ],
+                "reversible": false
+              },
+              "effect": "escalate",
+              "require_binding": true,
+              "note": "irreversible money goes to a human"
+            }
+          ]
+        }
+      },
+      "request": {
+        "consultation_type": "action_approval",
+        "action_descriptor": {
+          "domain": "financial",
+          "reversible": false,
+          "magnitude": "high",
+          "summary": "Wire funds to a vendor."
+        }
+      },
+      "expected": {
+        "signal": "escalate",
+        "deference_level": "high"
+      }
     }
   ]
 }

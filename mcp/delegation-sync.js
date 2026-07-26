@@ -2,9 +2,20 @@
 //
 // Deposits act-as-me delegation SUGGESTIONS (built by consult-core.js
 // buildDelegationPromotions from the consult override history) into the relay's
-// `agent_to_ext` mailbox slot, encrypted under fp_sync_key. The MCP server shares the
-// extension's pairing (Option B — pair_key exported from the extension), so it derives
-// the SAME fp_sync_key the extension uses to drain + decrypt; the extension union-merges
+// `agent_to_ext` mailbox slot, encrypted under fp_sync_key.
+//
+// ⚠️ KEY DEPENDENCY (not merely historical — see
+// docs/roadmap/paired-client-identity-2026-07-22.md). fp_sync_key is derived from
+// pair_key, and the EXTENSION drains this lane with its OWN single fp_sync_key — no
+// multi-client key loop, unlike the phone's drains. So this deposit is readable only
+// when the MCP and the extension share a pair_key (the original "Option B": the
+// extension's pairing exported to mcp/pairing.json). An MCP paired independently via
+// `pair.js` derives a DIFFERENT key, and the extension logs "likely key mismatch" and
+// drops the suggestion silently. Independent pairing is what makes the MCP a distinct
+// principal for §10.5 `agents` scoping, so these two properties are in tension until
+// the extension's drain gains the phone's try-each-verified-client loop.
+//
+// The extension union-merges
 // the suggestions (sync-merge.js mergeAgentSuggestions) into suggested_rules, where the
 // existing popup review card surfaces them for endorsement.
 //

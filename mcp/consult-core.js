@@ -16,6 +16,8 @@
 
 import { PhaedoError } from './errors.js';
 import { loadPolicies, applyPolicies, matchAuthorization } from './consult-policy.js';
+import { normalizeActionBinding, isBound } from './action-binding.js';
+import { normalizeDomain, canonicalDomain } from './lib/domain.js';
 
 export const CONSULTATION_TYPES = [
   'action_approval',
@@ -367,14 +369,25 @@ export function normalizeRequest(request) {
   }
   const ctx = (request.context && typeof request.context === 'object') ? request.context : {};
   const ev = ctx.evidence_provided;
+  // §10.2 action_binding: the concrete call this descriptor claims to describe.
+  // Optional — an unbound request resolves exactly as before — but an authored
+  // authorization may refuse to RELAX anything without it (§10.5 require_binding).
+  const binding = normalizeActionBinding(request.action_binding);
   return {
     type,
-    domain: typeof ad.domain === 'string' ? ad.domain : undefined,
+    // NORMALIZED only (case/whitespace) — deliberately NOT vocabulary-mapped. The
+    // request domain feeds §10.5 matching, and a relaxing rule must keep matching on
+    // the literal the agent sent; `domainCovers` applies the vocabulary itself, and
+    // only for restrictive rules. Mapping here instead would let an alias widen a
+    // grant. The RECEIPT stores the canonical form (that is the evidence axis).
+    domain: typeof ad.domain === 'string' ? (normalizeDomain(ad.domain) || undefined) : undefined,
     reversible: typeof ad.reversible === 'boolean' ? ad.reversible : undefined,
     magnitude: magnitude || 'medium',
     amount: typeof ad.amount === 'number' && isFinite(ad.amount) ? ad.amount : undefined,
     summary: typeof ad.summary === 'string' ? ad.summary : undefined,
     evidenceProvided: Array.isArray(ev) ? ev : (ev != null ? [ev] : []),
+    binding,
+    bound: isBound(binding),
   };
 }
 
@@ -530,7 +543,15 @@ export function deriveDelegationSignals(receipts, { now = new Date().toISOString
     const sig = r?.response?.signal;
     const contribution = delegationCorrection(sig, r && r.user_action); // signed; 0 = agreement/no lesson
     if (!contribution) continue;
-    const domain = (typeof r?.request?.action_descriptor?.domain === 'string') ? r.request.action_descriptor.domain : '';
+    // Canonicalize the domain BEFORE bucketing, or one concept spelled several ways
+    // (finance / financial / Finance) fragments into several near-identical buckets — the
+    // drift §10.2's published vocabulary exists to end. Both the live overlay
+    // (deriveDelegationSignals) and the promotion cards (buildDelegationPromotions) key on
+    // this, so both must canonicalize or a card floods / an overlay splits. Free text still
+    // survives — an unrecognized domain canonicalizes to itself — so only known synonyms
+    // merge, never distinct classes.
+    const domain = canonicalDomain(
+      (typeof r?.request?.action_descriptor?.domain === 'string') ? r.request.action_descriptor.domain : '');
     for (const d of (Array.isArray(r.drivers) ? r.drivers : [])) {
       if (!CUES[d && d.cue]) continue;                             // scalar caution cues only (ambiguity later)
       const k = `${d.cue}|${domain}`;
@@ -627,7 +648,15 @@ export function buildDelegationPromotions(receipts, fp, { now = new Date().toISO
     const sig = r?.response?.signal;
     const contribution = delegationCorrection(sig, r && r.user_action);
     if (!contribution) continue;
-    const domain = (typeof r?.request?.action_descriptor?.domain === 'string') ? r.request.action_descriptor.domain : '';
+    // Canonicalize the domain BEFORE bucketing, or one concept spelled several ways
+    // (finance / financial / Finance) fragments into several near-identical buckets — the
+    // drift §10.2's published vocabulary exists to end. Both the live overlay
+    // (deriveDelegationSignals) and the promotion cards (buildDelegationPromotions) key on
+    // this, so both must canonicalize or a card floods / an overlay splits. Free text still
+    // survives — an unrecognized domain canonicalizes to itself — so only known synonyms
+    // merge, never distinct classes.
+    const domain = canonicalDomain(
+      (typeof r?.request?.action_descriptor?.domain === 'string') ? r.request.action_descriptor.domain : '');
     for (const d of (Array.isArray(r.drivers) ? r.drivers : [])) {
       const dim = CUE_DIMENSION[d && d.cue];
       if (!dim) continue;
@@ -744,6 +773,15 @@ export function ruleResponse(vd, n) {
   return shape(n.type, resolved.signal, cal.confidence, resolved.hint, cal.deference_level);
 }
 
+// The §10.5 evaluation context, lifted out of `opts` once so both public entries
+// gate identically. `clientId` is the SERVING paired client's own `client_id` (from
+// the server's `pairing.json`, supplied by the transport layer) — the identity
+// `agents` scoping matches on; never anything the caller asserted. Absent here means
+// unpaired, which makes every `agents`-scoped relaxing rule inert. Passing `now`
+// through as well keeps rule expiry on the same clock `loadPolicies` already gives
+// §5.7 commitments; both fall back to `Date.now()` when a caller omits them.
+const policyCtx = (opts = {}) => ({ now: opts.now, clientId: opts.clientId ?? null });
+
 // ── Public pure entry ─────────────────────────────────────────────────────────
 // (vd, request[, opts]) -> §10.3 response. Deterministic; applies authored §10.5
 // policies last so a standing guardrail wins (even over an abstain). `opts.policies`
@@ -752,7 +790,7 @@ export function ruleResponse(vd, n) {
 export function resolveConsultationCore(vd, request = {}, opts = {}) {
   assertVaultUsable(vd);
   const n = normalizeRequest(request);
-  return applyPolicies(ruleResponse(vd, n), n, loadPolicies(vd, opts));
+  return applyPolicies(ruleResponse(vd, n), n, loadPolicies(vd, opts), policyCtx(opts));
 }
 
 // Back-compat alias: the prior public name of the sync rule entry. Kept so existing
@@ -769,7 +807,7 @@ export const buildConsultationResponse = resolveConsultationCore;
 export function checkAuthorization(vd, request = {}, opts = {}) {
   assertVaultUsable(vd);
   const n = normalizeRequest(request);
-  const auth = matchAuthorization(n, loadPolicies(vd, opts));
+  const auth = matchAuthorization(n, loadPolicies(vd, opts), policyCtx(opts));
   return {
     phaedo_response_version: '0.1',
     request_type: 'authorization_check',

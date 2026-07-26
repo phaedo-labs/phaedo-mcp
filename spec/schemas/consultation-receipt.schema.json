@@ -5,7 +5,7 @@
   "description": "One entry in the encrypted, append-only, vault-held record of resolved consultations (Phaedo Protocol v0.1 §10.6). Receipts NEVER leave the device — this schema documents the at-rest plaintext shape inside the phaedo:receipts:enc:v0.1 envelope, not a wire artifact. Captures the request descriptor and the response signal fields only; never layer content or the projection.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["receipt_id", "created_at", "via", "agent_id", "request", "response", "user_action"],
+  "required": ["receipt_id", "created_at", "via", "agent_id", "client_id", "request", "response", "user_action"],
   "properties": {
     "receipt_id": { "type": "string", "description": "UUID v4. Stable identifier; the handle for the user_action update." },
     "created_at": { "type": "string", "description": "RFC 3339 UTC timestamp of resolution." },
@@ -13,7 +13,8 @@
       "enum": ["phaedo_consult", "phaedo_check_authorization"],
       "description": "Which tool resolved it: a full consultation, or a matched deterministic pre-flight (only MATCHED pre-flights produce receipts)."
     },
-    "agent_id": { "type": ["string", "null"], "description": "The requesting agent's self-identifier, when provided." },
+    "agent_id": { "type": ["string", "null"], "description": "The requesting agent's self-identifier, when provided. SELF-ASSERTED and unverified — an audit label only. A §10.5 authorization MUST NOT be scoped against it; use client_id." },
+    "client_id": { "type": ["string", "null"], "description": "The paired client that SERVED this consultation — the resolver's own client_id from its pairing record, not anything the caller supplied. Established out-of-band with the subject's phone (ECDH + user-verified SAS) and revocable there, so it is the identity §10.5 `agents` scoping matches on. Null when the resolver is unpaired. Lets the audit distinguish which paired client acted from whichever vendor string it claimed in agent_id." },
     "request": {
       "type": "object",
       "additionalProperties": false,
@@ -29,6 +30,17 @@
             "magnitude": { "type": ["string", "null"] },
             "amount": { "type": ["number", "null"] },
             "summary": { "type": ["string", "null"], "maxLength": 500, "description": "The agent's action description (agent-provided text, not fingerprint content)." }
+          }
+        },
+        "action_binding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tool_name", "arguments_hash"],
+          "description": "OPTIONAL (§10.2/§10.6). The binding the request carried, recorded verbatim and immutable — what the agent said it was about to run, checkable against what it actually ran. Absent when the request was unbound.",
+          "properties": {
+            "tool_name": { "type": "string", "maxLength": 120 },
+            "arguments_hash": { "type": "string", "maxLength": 128 },
+            "arguments_preview": { "type": "string", "maxLength": 200 }
           }
         }
       }
@@ -63,6 +75,10 @@
     "user_action": {
       "enum": ["approved", "rejected", "modified", "unknown", null],
       "description": "null at write time. The ONLY field mutable after write — set when override data exists (what the subject actually did with the agent's action). The seed of agreement tracking (M5)."
+    },
+    "user_action_at": {
+      "type": "string",
+      "description": "OPTIONAL RFC 3339 — when `user_action` was recorded. Written with `user_action` and mutable only with it. NOT decision latency (the subject may mark in a later sitting); its purpose is to reveal a run of receipts stamped in a single pass, which §10.7 autonomy promotion treats as bookkeeping rather than deliberate consent. Absent on receipts marked before this field existed; consumers MUST treat absence as 'unknown', never as 'batched'."
     }
   }
 }

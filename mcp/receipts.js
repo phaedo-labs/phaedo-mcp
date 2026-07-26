@@ -25,7 +25,9 @@ import { mkdir, readFile, writeFile, chmod, rename } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { Phaedo, b64uEnc, b64uDec } from './lib/phaedo-crypto.js';
+import { canonicalDomain } from './lib/domain.js';
 import { getOrCreateCacheKey, defaultStateDir } from './cache.js';
+import { normalizeActionBinding } from './action-binding.js';
 
 const { Envelope } = Phaedo;
 
@@ -105,11 +107,17 @@ function withStoreLock(stateDir, fn) {
 // never the projection (§10.4 holds inside the vault too). `via` records which
 // tool resolved it (phaedo_consult | phaedo_check_authorization) so M5 can weigh
 // full consultations and pre-flight matches separately.
-export function buildReceipt({ via, agentId, request, response, drivers, now = Date.now() }) {
+export function buildReceipt({ via, agentId, clientId, request, response, drivers, now = Date.now() }) {
   const ad = (request && typeof request.action_descriptor === 'object' && request.action_descriptor) || {};
   // Provenance (optional, §10.4-safe — LOCAL audit only): the Decision&Risk cues that
   // drove an inferred consult, each {cue, lean?/value?, confidence, basis}. No layer
   // text; coerced to the known shape; absent for deterministic pre-flights.
+  // Defensive: a malformed binding must not fail the receipt write (a receipt-write
+  // failure must never break the consultation — §10.6). The resolver has already
+  // rejected structurally-bad bindings with `request_malformed`, so anything that
+  // throws here is a caller bypassing it; record nothing rather than half of it.
+  let bnd = null;
+  try { bnd = normalizeActionBinding(request?.action_binding); } catch { bnd = null; }
   const drv = Array.isArray(drivers) ? drivers.slice(0, 16).map((d) => ({
     cue: typeof d?.cue === 'string' ? d.cue : null,
     ...(typeof d?.lean === 'number' ? { lean: d.lean } : {}),
@@ -121,16 +129,33 @@ export function buildReceipt({ via, agentId, request, response, drivers, now = D
     receipt_id: crypto.randomUUID(),
     created_at: new Date(now).toISOString(),
     via: via || 'phaedo_consult',
+    // WHO CLAIMED to be calling. Self-asserted, unverified, and never a gate — the
+    // same standing `action_descriptor` was given in v0.1.48. Audit label only.
     agent_id: typeof agentId === 'string' ? agentId : null,
+    // WHO ACTUALLY SERVED the call: this server's own paired-client id, established
+    // out-of-band with the phone under a user-verified SAS. This is the identity
+    // §10.5 `agents` scoping matches on, so the audit can distinguish which paired
+    // client acted from whichever vendor string it chose to claim. Null = unpaired.
+    client_id: typeof clientId === 'string' && clientId ? clientId : null,
     request: {
       consultation_type: request?.consultation_type || 'action_approval',
       action_descriptor: {
-        domain: typeof ad.domain === 'string' ? ad.domain : null,
+        // Canonical form, matching what the resolver reasoned about (lib/domain.js).
+        // The receipt is the evidence store the promotion tallies key on, so a raw
+        // `"Finance"` here would be a class of its own and split the subject's
+        // approvals away from `"finance"`.
+        domain: typeof ad.domain === 'string' ? (canonicalDomain(ad.domain) || null) : null,
         reversible: typeof ad.reversible === 'boolean' ? ad.reversible : null,
         magnitude: typeof ad.magnitude === 'string' ? ad.magnitude : null,
         amount: typeof ad.amount === 'number' ? ad.amount : null,
         summary: typeof ad.summary === 'string' ? ad.summary.slice(0, 500) : null,
       },
+      // §10.2 binding: the concrete call the descriptor above CLAIMS to describe.
+      // This is the field that makes a descriptor/action mismatch provable later —
+      // the descriptor is the agent's story, this is what it said it would run.
+      // Never the arguments themselves: a digest, the tool name, and at most a
+      // short human preview.
+      ...(bnd ? { action_binding: bnd } : {}),
     },
     response: {
       signal: response?.signal ?? null,
@@ -164,6 +189,12 @@ export async function updateUserAction(stateDir, receiptId, action, { now = Date
     const r = store.receipts.find((x) => x.receipt_id === receiptId);
     if (!r) return false;
     r.user_action = action;
+    // WHEN the outcome was recorded, alongside WHAT it was. Not decision latency —
+    // the subject may mark in a later sitting — but it does reveal a screenful of
+    // receipts stamped in one pass, which §10.7 autonomy promotion treats as
+    // bookkeeping rather than deliberate consent. Mutable with `user_action`, and
+    // only with it (§10.6: user_action is the sole mutable field; this is part of it).
+    r.user_action_at = new Date(now).toISOString();
     await writeStore(stateDir, store, now);
     return true;
   });

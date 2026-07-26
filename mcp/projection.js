@@ -87,7 +87,10 @@ export function buildInjectionResponse(vd, request = {}, now = Date.now()) {
   }
 
   const { vd: selectedVd, included } = selectLayers(vd, request.requested_layers);
-  const projection = PhaedoContext.renderContextBlock(selectedVd);
+  // §5.2 v0.2: the §9.2 session_context (domain / task_hint) drives deterministic
+  // activation of domain/task-scoped standing instructions; absent, scoped rules
+  // render with a conditional prefix instead.
+  const projection = PhaedoContext.renderContextBlock(selectedVd, { sessionContext: request.session_context || null });
   if (!projection) {
     throw new PhaedoError('decryption_failed', 'Fingerprint produced no projection (empty or missing layers).');
   }

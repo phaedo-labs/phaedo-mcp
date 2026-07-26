@@ -1,7 +1,14 @@
-// MCP Phase 1b — real key boundary (Option B: share the extension's pairing).
+// MCP Phase 1b — real key boundary.
 //
-// Given a pairing record that already holds `pair_key` (exported from the paired
-// extension), this runs the spec-faithful authorize → pull → decrypt flow — a
+// The pairing record may come from EITHER provenance: `pair.js`, which pairs this
+// server as its own SAS-approved, revocable client (mcp-revocable-approval-plan.md,
+// DONE + device-verified), or the older "Option B" export of the extension's
+// `phaedo_local_pairing`. This path works under both — the phone's drains try each
+// verified client's key — but the extension-facing `agent_to_ext` lane does NOT;
+// see delegation-sync.js and docs/roadmap/paired-client-identity-2026-07-22.md.
+//
+// Given a pairing record holding `pair_key`, this runs the spec-faithful
+// authorize → pull → decrypt flow — a
 // direct port of popup.js reAuthorize (:745) + silentSync (:883):
 //
 //   authorize: fresh ephemeral X25519, HMAC-bound to pair_key, POST /v1/authorize,
@@ -16,15 +23,34 @@
 // after the one-time pairing.
 
 import { readFile } from 'fs/promises';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import { Phaedo, b64uEnc, b64uDec } from './lib/phaedo-crypto.js';
 
 const { Identity, Kdf, Envelope } = Phaedo;
 const EXPIRY_SKEW_MS = 30 * 1000; // re-auth this early to avoid edge-of-expiry races
-const TIMEOUT_MS = 5000;          // fail fast when the phone is unreachable → cache fallback
 
-// ── Pairing record (Option B: exported from the extension's phaedo_local_pairing)
+// TWO timeouts, because the two requests wait on completely different things.
+//
+// `/v1/profile` waits on a MACHINE: the phone either answers or it doesn't, so failing fast
+// is right — an unreachable phone should fall back to the cache quickly.
+//
+// `/v1/authorize` waits on a PERSON: they must notice their phone, read the card, and pass
+// a biometric gate. A single 5s budget covered both, which made every authorize a race the
+// subject usually lost — the client aborted, the card vanished mid-tap, and an approval
+// completed seconds later landed on a request nobody was listening for. Worse, the abort is
+// a TRANSIENT failure, so it took the silent cache fallback: the agent then answered
+// authorization questions from a stale fingerprint while sounding certain. Observed on
+// device 2026-07-25 — the cache had not been refreshed for ~22 hours and a REVOKED payment
+// grant was still being honoured, because no live pull had ever completed.
+//
+// Face ID on the first try can fit in 5s. A passcode fallback cannot, and neither can a
+// phone that is face-down on a table. Two minutes is the human budget; the phone's own card
+// expiry remains the real bound, this just stops the client giving up first.
+const TIMEOUT_MS = 5000;             // reachability: /v1/profile
+const APPROVE_TIMEOUT_MS = 120000;   // human-in-the-loop: /v1/authorize
+
+// ── Pairing record (from `pair.js`, or the legacy extension export — see header)
 // { endpoint, client_id, client_secret, pair_key (b64url 32B), vault_pub, ... }
 export async function loadPairingRecord(baseDir) {
   const path = process.env.PHAEDO_PAIRING
@@ -55,6 +81,30 @@ export function hasPairingRecord(baseDir) {
   return existsSync(resolve(baseDir, 'pairing.json'));
 }
 
+// This server's OWN paired-client identifier — the identity §10.5 `agents` scoping
+// matches on (`docs/roadmap/paired-client-identity-2026-07-22.md`).
+//
+// Read SYNCHRONOUSLY at startup, beside the policy file, because it is process-wide
+// configuration rather than per-call state: one MCP server process serves exactly one
+// paired client, so this cannot change between calls without a restart. That is also
+// what makes the whole design work — the server never has to ask a caller who it is.
+//
+// Fail-safe by construction: any failure (no pairing, unreadable, malformed, missing
+// or non-string `client_id`) yields null, and null makes every `agents`-scoped
+// RELAXING rule inert. A broken read can therefore only ever withhold authority, never
+// grant it. Never throws.
+export function readServingClientId(baseDir) {
+  const path = process.env.PHAEDO_PAIRING
+    ? resolve(process.cwd(), process.env.PHAEDO_PAIRING)
+    : resolve(baseDir, 'pairing.json');
+  try {
+    const id = JSON.parse(readFileSync(path, 'utf8'))?.client_id;
+    return typeof id === 'string' && id.trim() ? id.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 // In-memory session cache, keyed by endpoint. Holds session_key (never persisted).
 const _sessions = new Map();
 
@@ -75,7 +125,7 @@ async function authorize(rec, deps) {
       eph_ext_pub: b64uEnc(eph.publicKey),
       eph_mac: b64uEnc(extMac),
     }),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(APPROVE_TIMEOUT_MS),   // waits on a human, not a machine
   });
   if (!res.ok) throw new PhoneError(`authorize failed (${res.status})`, res.status);
   const body = await res.json();
@@ -100,12 +150,24 @@ async function getSession(rec, deps) {
 }
 
 // Map the §9-profile inner plaintext to the vault payload shape the projection
-// expects. Profile inner is { data: <fingerprint>, metrics: {signals, ling,
-// sessions}, scopes } (mobile localServer handleProfile + popup restoreMetrics).
-function toVaultPayload(inner) {
+// expects. Profile inner is { data: <fingerprint>, user_configuration?, metrics:
+// {signals, ling, sessions}, scopes } (mobile localServer handleProfile + popup
+// restoreMetrics). The optional §5 sibling (config home migration, part 3) maps
+// to phaedo_user_configuration, activating the canonical authored read
+// (consult-policy loadPolicies / context-block renderContextBlock); absent —
+// pre-part-3 phone — consumers fall back to the fingerprint A-home unchanged.
+export function toVaultPayload(inner) {
   const m = inner.metrics || {};
   return {
     phaedo_fingerprint: inner.data,
+    ...(inner.user_configuration && typeof inner.user_configuration === 'object'
+      ? { phaedo_user_configuration: inner.user_configuration } : {}),
+    // §8.3 signing public key — a sibling of the fingerprint, carried through so a
+    // consumer can VERIFY a signature the phone produced (e.g. an AP2 mandate) against a
+    // key learned over the trusted pairing channel, not one asserted in the signed object
+    // itself. A plain non-empty string or nothing; never trusted from inside `data`.
+    ...(typeof inner.signing_public_key === 'string' && inner.signing_public_key
+      ? { phaedo_signing_public_key: inner.signing_public_key } : {}),
     phaedo_behavioral_signals: m.signals || {},
     phaedo_linguistic_profile: m.ling || {},
     phaedo_session_metrics: m.sessions || {},

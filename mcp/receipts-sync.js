@@ -20,12 +20,15 @@
 //                     safe and the phone need not track per-mark ACKs — the next
 //                     receipts digest reflects applied marks (`user_action` set).
 //
-// Crypto: same fp_sync_key the delegation channel uses (the MCP shares the extension's
-// pair_key, Option B); the relay only ever sees ciphertext. Best-effort and isolated:
+// Crypto: fp_sync_key derived from this server's pair_key. Drained by the PHONE, whose
+// multi-client loop tries each verified client's key — so independent pairing is fine
+// here (unlike agent_to_ext, see delegation-sync.js). The relay only ever sees
+// ciphertext. Best-effort and isolated:
 // a deposit/drain failure must NEVER break the tool that triggered it.
 
 import { Phaedo, b64uDec } from './lib/phaedo-crypto.js';
 import { readReceipts, markOutcome, USER_ACTIONS } from './receipts.js';
+import { agreementDigest } from './agreement.js';
 
 const { Kdf, Envelope } = Phaedo;
 const DEFAULT_RELAY = 'https://phaedo-relay.fly.dev';
@@ -46,6 +49,13 @@ function digestFields(r) {
     created_at:  r.created_at,
     via:         r.via,
     agent_id:    r.agent_id || null,
+    // The paired client that actually SERVED the call, beside the vendor string it
+    // claimed. §10.4-safe (an opaque id the subject's own phone issued, not persona
+    // content) and the phone is the one surface that can render it usefully: it holds
+    // the client registry, so it can show the friendly NAME where the receipt holds
+    // only the id. Without it the Activity screen can only report what the agent said
+    // it was — which is precisely the claim §10.5 stopped trusting.
+    client_id:   r.client_id || null,
     request: {
       consultation_type: r?.request?.consultation_type || null,
       action_descriptor: {
@@ -71,6 +81,12 @@ export async function buildReceiptsDeposit(pairKeyB64u, receipts, { cap = DIGEST
   const list = Array.isArray(receipts) ? receipts : [];
   // Most-recent N (receipts are append-only, ordered by creation in the store).
   const head = list.slice(-cap).map(digestFields).filter(Boolean);
+  // Agreement rides the SAME digest, but is computed over the WHOLE store, not the
+  // capped head — the rate is a 30-day property of the subject's history, and slicing
+  // it to the last 50 entries would silently redefine the metric.
+  const generatedAt = now();
+  const agreementAt = Date.parse(generatedAt);
+  const agreement = agreementDigest(list, { now: Number.isFinite(agreementAt) ? agreementAt : Date.now() });
   const pairKey = b64uDec(pairKeyB64u);
   let fpSyncKey;
   try {
@@ -79,7 +95,7 @@ export async function buildReceiptsDeposit(pairKeyB64u, receipts, { cap = DIGEST
     pairKey.fill(0);
   }
   try {
-    const inner = { kind: 'receipts_digest', data: { receipts: head, generated_at: now() } };
+    const inner = { kind: 'receipts_digest', data: { receipts: head, agreement, generated_at: generatedAt } };
     const plaintext = new TextEncoder().encode(JSON.stringify(inner));
     const envelope = await Envelope.wrap(plaintext, fpSyncKey, { artifact_kind: 'receipts_digest', created_at: now() });
     plaintext.fill(0);

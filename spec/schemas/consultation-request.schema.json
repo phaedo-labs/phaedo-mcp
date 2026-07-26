@@ -21,6 +21,16 @@
         "summary": { "type": "string" }
       }
     },
+    "action_binding": {
+      "type": "object",
+      "required": ["tool_name", "arguments_hash"],
+      "description": "OPTIONAL (§10.2). Binds the consultation to the concrete call the action_descriptor claims to describe. The descriptor is the agent's CLAIM about its action — untrusted input — while this is a commitment to what it will actually invoke. Recorded on the §10.6 receipt so a mismatch is provable, shown to the subject on an escalation, and required by a §10.5 authorization carrying `require_binding` before that rule will relax anything. A structurally invalid binding MUST be rejected with `request_malformed`.",
+      "properties": {
+        "tool_name": { "type": "string", "minLength": 1, "maxLength": 120, "description": "The tool or function about to be invoked." },
+        "arguments_hash": { "type": "string", "pattern": "^[A-Za-z0-9_-]{16,128}$", "description": "Hex or base64url digest over the Section 6 canonical form of the arguments. The arguments themselves MUST NOT be transmitted." },
+        "arguments_preview": { "type": "string", "maxLength": 200, "description": "OPTIONAL short human-readable rendering, for display to the subject on an escalation. Advisory only — never a resolution input." }
+      }
+    },
     "context": { "type": "object", "description": "Free-form situational hints, e.g. { deadline_pressure, evidence_provided: [] }." }
   }
 }

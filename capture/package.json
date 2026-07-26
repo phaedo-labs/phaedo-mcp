@@ -1,0 +1,4 @@
+{
+  "//": "Declares capture/*.js as ES modules so Node (the Claude Code capture hook, tests) can import them directly. Surface-agnostic Track-A capture contract: transcript parsing, source-id derivation, merge-owner precedence. Node-only; nothing here ships in the browser extension.",
+  "type": "module"
+}

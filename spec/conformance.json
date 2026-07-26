@@ -2,8 +2,12 @@
   "_note": "Phaedo Protocol §11.3 self-identification — the reference implementation's conformance statement. Kept honest by spec/test-schemas.mjs (protocol_version must match docs/protocol/v0.1.md; test_vector_results 'pass' set must match the populated spec/test-vectors/*.json). A third-party implementation publishes its own file in this shape.",
   "standard": "Anamnesis",
   "implementation": "Phaedo reference implementation (Chrome extension + MCP server)",
-  "protocol_version": "0.1.40",
-  "levels": [0, 1, 2],
+  "protocol_version": "0.1.60",
+  "levels": [
+    0,
+    1,
+    2
+  ],
   "profiles": [
     "Projection Consumer",
     "Consumer",
@@ -24,8 +28,9 @@
     "TC-FP-CONFORMANCE": "pass",
     "TC-CONS": "pass",
     "TC-RESOLVE": "pass",
-    "TC-ENV": "queued",
-    "TC-EXPORT": "queued",
-    "TC-INJ": "queued"
+    "TC-ENV": "pass",
+    "TC-EXPORT": "pass",
+    "TC-INJ": "pass",
+    "TC-SIGN": "pass"
   }
 }

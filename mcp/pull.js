@@ -7,7 +7,7 @@
 
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { loadFingerprint } from './fingerprint-source.js';
+import { loadFingerprint, sourceOf } from './fingerprint-source.js';
 
 const BASE_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -15,10 +15,26 @@ loadFingerprint(BASE_DIR)
   .then((vd) => {
     const fp = (vd && vd.phaedo_fingerprint) || {};
     const layers = fp.layers ? Object.keys(fp.layers).length : 0;
+    const src = sourceOf(vd);
+    // This line used to say "from the phone" unconditionally — including when the pull had
+    // failed and the at-rest cache was served instead. That is precisely how a 22-hour-old
+    // profile went unnoticed while the agent answered authorization questions from it. The
+    // whole point of this command is to verify the pairing works, so it has to distinguish
+    // "your phone answered" from "your phone didn't, here's an old copy".
+    if (src.live) {
+      process.stdout.write(
+        `✓ Read your profile from the phone — fingerprint ${fp.fingerprint_id || '(no id)'}, ${layers} layer(s).\n`
+      );
+      process.exit(0);
+    }
+    const hours = src.ageMs != null ? Math.round(src.ageMs / 3600000) : null;
     process.stdout.write(
-      `✓ Read your profile from the phone — fingerprint ${fp.fingerprint_id || '(no id)'}, ${layers} layer(s).\n`
+      `⚠ Could NOT reach your phone — served a CACHED copy${hours != null ? ` about ${hours}h old` : ''} ` +
+      `(fingerprint ${fp.fingerprint_id || '(no id)'}, ${layers} layer(s)).\n` +
+      `  Anything you changed since then — including a revoked authorization — is NOT reflected.\n` +
+      `  Open Phaedo on your phone and approve the card, then run this again.\n`
     );
-    process.exit(0);
+    process.exit(2);                       // distinct from 1 (hard failure) — stale, not broken
   })
   .catch((err) => {
     process.stderr.write(`✗ Couldn't read your profile: ${err.message}\n`);

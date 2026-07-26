@@ -49,7 +49,9 @@ const polSchema = load('schemas/consultation-policy.schema.json');
 // Proposal 0007: match/effect moved to $defs (shared with standing_rules); rules[] $refs them.
 const effectEnum = polSchema.$defs.effect.enum;
 ok(effectEnum.join(',') === 'escalate,require_human,decline,autoproceed,bias_cautious,bias_bold', 'policy effect enum matches the engine');
-ok('amount_gt' in polSchema.$defs.match.properties, 'policy schema defines the amount_gt numeric threshold (§10.5 authorizations)');
+ok('amount_gt' in polSchema.$defs.match.properties, 'policy schema defines the amount_gt numeric FLOOR (§10.5 authorizations)');
+ok('amount_lt' in polSchema.$defs.match.properties, 'policy schema defines the amount_lt numeric CEILING — without it an autoproceed rule cannot express "up to N" (§10.5)');
+ok(polSchema.$defs.match.properties.amount_lt.type === 'number', 'amount_lt is a number');
 ok(polSchema.properties.rules.items.properties.effect.$ref === '#/$defs/effect', 'rules[] effect $refs the shared $defs');
 ok(polSchema.properties.rules.items.properties.match.$ref === '#/$defs/match', 'rules[] match $refs the shared $defs');
 const sample = load('../mcp/consult-policies.sample.json');
@@ -124,8 +126,8 @@ console.log('\nconsultation-receipt schema ↔ engine');
 // ── vault-data.schema.json ↔ the runtime guards (M0.2, informative) ───────────
 console.log('\nvault-data schema ↔ runtime guards');
 const vdSchema = load('schemas/vault-data.schema.json');
-const VD_KEYS = ['phaedo_fingerprint', 'phaedo_behavioral_signals', 'phaedo_linguistic_profile', 'phaedo_session_metrics'];
-ok(Object.keys(vdSchema.properties).sort().join(',') === [...VD_KEYS].sort().join(','), 'vd schema documents exactly the 4 wrapper keys');
+const VD_KEYS = ['phaedo_fingerprint', 'phaedo_user_configuration', 'phaedo_behavioral_signals', 'phaedo_linguistic_profile', 'phaedo_session_metrics'];
+ok(Object.keys(vdSchema.properties).sort().join(',') === [...VD_KEYS].sort().join(','), 'vd schema documents exactly the 5 wrapper keys (incl. the §5 sibling, part 2)');
 ok(!vdSchema.required, 'vd schema has no required keys (an empty vault is legitimate)');
 ok(/INFORMATIVE/.test(vdSchema.title), 'vd schema is marked INFORMATIVE (not a wire artifact)');
 {
@@ -310,15 +312,20 @@ ok(validateFingerprint({ standing_rules: [{ kind: 'instruction', text: 'email me
 }
 
 // ── standing_rules ↔ schema (Proposal 0007, one authored home) ────────────────
+// The entry shape is CANONICAL in user-configuration.schema.json (§5 config home
+// migration, part 1); the fingerprint A-home $refs it so the homes cannot drift.
 console.log('\nstanding_rules schema (Proposal 0007)');
 {
   const sr = fpSchema.properties.phaedo_fingerprint.properties.standing_rules;
   ok(!!sr && sr.type === 'array', 'fingerprint schema defines standing_rules[]');
-  const it = sr.items;
+  ok(sr.items.$ref === 'user-configuration.schema.json#/$defs/standing_instruction',
+    'A-home standing_rules[] $refs the canonical §5.2 entry shape (one definition, no drift)');
+  const ucSchema = load('schemas/user-configuration.schema.json');
+  const it = ucSchema.$defs.standing_instruction;
   ok(it.required.includes('kind'), 'kind is required on every entry');
   ok(it.properties.kind.enum.join(',') === 'instruction,authorization', 'kind discriminator enum = instruction,authorization');
   // conditional required: instruction⇒text, authorization⇒effect (allOf if/then)
-  const conds = (it.allOf || []).map((c) => [c.if.properties.kind.const, c.then.required[0]]);
+  const conds = (it.allOf || []).filter((c) => c.if.properties.kind).map((c) => [c.if.properties.kind.const, c.then.required[0]]);
   ok(conds.some(([k, r]) => k === 'instruction' && r === 'text'), 'instruction requires text');
   ok(conds.some(([k, r]) => k === 'authorization' && r === 'effect'), 'authorization requires effect');
   // the authorization variant shares the §10.5 $defs (single definition, no drift)
@@ -328,7 +335,9 @@ console.log('\nstanding_rules schema (Proposal 0007)');
   ok(it.properties.decision.required.includes('dimension'), 'decision binding requires a dimension');
   ok(it.properties.decision.properties.polarity.enum.join(',') === 'positive,negative', 'decision polarity enum = positive,negative');
   ok('value' in it.properties.decision.properties, 'decision binding carries an optional catalog value (template-sourced rules)');
-  ok(it.properties.source.enum.join(',') === 'interview,interview_template,delta_promotion,delegation_promotion', 'source provenance enum incl. interview_template + delegation_promotion');
+  ok(it.properties.source.enum.join(',') === 'interview,interview_template,delta_promotion,delegation_promotion,autonomy_promotion', 'source provenance enum incl. interview_template + delegation_promotion + autonomy_promotion (§10.7)');
+  ok(it.properties.require_binding.type === 'boolean' && it.properties.require_binding.default === false,
+     '§10.5 require_binding is a boolean defaulting to false (existing authorizations unchanged)');
   ok(it.properties.decision.properties.origin.enum.join(',') === 'self,delegation', 'decision binding carries an optional origin (act-as-me authored rules)');
   // focused structural check (validateFingerprint covers layers/signals, not the authored block)
   const reqFor = (e) => e.kind === 'instruction' ? ['kind', 'text'] : e.kind === 'authorization' ? ['kind', 'effect'] : ['kind'];
@@ -337,6 +346,66 @@ console.log('\nstanding_rules schema (Proposal 0007)');
   ok(!validRule({ kind: 'instruction' }), 'an instruction without text is rejected');
   ok(validRule({ kind: 'authorization', match: { domains: ['finance'], amount_gt: 5000 }, effect: 'escalate' }), 'a well-formed authorization validates');
   ok(!validRule({ kind: 'authorization', match: {} }), 'an authorization without effect is rejected');
+}
+
+// ── §5 user-configuration schema ↔ the derivation seam (config home migration) ─
+console.log('\nuser-configuration schema (§5 home migration, part 1)');
+{
+  const ucSchema = load('schemas/user-configuration.schema.json');
+  ok(ucSchema.required.join(',') === 'phaedo_user_configuration', 'wrapper key mirrors phaedo_fingerprint (the vault/payload key)');
+  const doc = ucSchema.properties.phaedo_user_configuration;
+  ok(['phaedo_protocol_version', 'configuration_id', 'subject_id', 'fingerprint_id', 'created_at', 'updated_at', 'schema_revision', 'standing_instructions', 'example_corpus']
+      .every((k) => doc.required.includes(k)), '§5.1 required set complete (incl. mandatory fingerprint_id pairing, §5.4)');
+  ok(doc.properties.standing_instructions.items.$ref === '#/$defs/standing_instruction', 'standing_instructions[] uses the canonical entry shape');
+  const ex = doc.properties.example_corpus.items;
+  ok(ex.properties.kind.enum.join(',') === 'writing_sample,decision_record,code_sample,other', '§5.3 example kind enum');
+  ok(ex.properties.content.maxLength === 8000, '§5.3 8000-char example limit');
+  ok(ex.required.join(',') === 'example_id,kind,label,content,created_at', '§5.3 required example fields');
+  // authorization match/effect stay tied to the shared §10.5 $defs through the move
+  const si = ucSchema.$defs.standing_instruction;
+  ok(si.properties.match.$ref === 'consultation-policy.schema.json#/$defs/match', 'canonical shape keeps match $ref to §10.5 $defs');
+  ok(si.properties.effect.$ref === 'consultation-policy.schema.json#/$defs/effect', 'canonical shape keeps effect $ref to §10.5 $defs');
+  // §5.2 v0.2 scope activation (OQ5): scoped rules carry their activation keys
+  ok(si.properties.scope.enum.join(',') === 'global,domain,task', 'scope enum unchanged (global,domain,task)');
+  ok(si.properties.scope_domains.items.minLength === 1 && si.properties.scope_domains.minItems === 1, 'scope_domains is a non-empty array of non-empty strings');
+  ok(si.properties.scope_tasks.items.minLength === 1 && si.properties.scope_tasks.minItems === 1, 'scope_tasks is a non-empty array of non-empty strings');
+  const scopeConds = (si.allOf || []).filter((c) => c.if.properties.scope).map((c) => [c.if.properties.scope.const, c.then.required[0]]);
+  ok(scopeConds.some(([s, r]) => s === 'domain' && r === 'scope_domains'), "scope 'domain' conditionally requires scope_domains");
+  ok(scopeConds.some(([s, r]) => s === 'task' && r === 'scope_tasks'), "scope 'task' conditionally requires scope_tasks");
+
+  // derivation tie: a config derived from the SHIPPED SAMPLE fingerprint conforms.
+  const { createRequire } = await import('node:module');
+  const req = createRequire(import.meta.url);
+  const UC = req('../user-config.js');
+  const { validateUserConfiguration } = await import('./validate-fingerprint.mjs');
+  const sampleVault = load('../mcp/sample-fingerprint.json');
+  const derived = UC.deriveUserConfiguration(sampleVault.phaedo_fingerprint, { now: '2026-07-19T00:00:00.000Z' });
+  const errs = validateUserConfiguration(derived);
+  ok(errs.length === 0, `config derived from the shipped sample fingerprint conforms (got: ${errs.join('; ')})`);
+  // and one with real authored rules, folded back and re-derived, stays conformant + byte-stable
+  const fpWithRules = { ...sampleVault.phaedo_fingerprint, standing_rules: [
+    { kind: 'instruction', text: 'Use prose by default.', priority: 10, instruction_id: 'i1' },
+    { kind: 'authorization', match: { domains: ['finance'], amount_gt: 5000 }, effect: 'escalate' },
+  ] };
+  const cfg2 = UC.deriveUserConfiguration(fpWithRules, { now: '2026-07-19T00:00:00.000Z' });
+  ok(validateUserConfiguration(cfg2).length === 0, 'derived config with instruction + authorization conforms');
+  const folded = UC.foldStandingInstructions(sampleVault.phaedo_fingerprint, cfg2);
+  ok(validateFingerprint(folded, fpSchema).length === 0, 'folding the §5 document back onto the A-home keeps the fingerprint conformant');
+  ok(UC.configContentSig(UC.deriveUserConfiguration(folded, { now: '2026-07-20T00:00:00.000Z', prior: cfg2 })) === UC.configContentSig(cfg2),
+    'derive∘fold round-trip is content-identical (the two homes carry the same authored bytes)');
+
+  // part 2: the sibling rides the vault payload — schema + §5.4 pairing tie
+  const vdSchema = load('schemas/vault-data.schema.json');
+  ok(vdSchema.properties.phaedo_user_configuration.$ref.endsWith('user-configuration.schema.json#/properties/phaedo_user_configuration'),
+    'vault-data schema carries the §5 sibling ($ref to the config schema)');
+  const { validateVaultData: vVD } = await import('./validate-fingerprint.mjs');
+  const pairedVd = { ...sampleVault, phaedo_user_configuration: UC.deriveUserConfiguration(sampleVault.phaedo_fingerprint, { now: '2026-07-19T00:00:00.000Z' }) };
+  ok(vVD(pairedVd).length === 0, 'a vault carrying a properly paired sibling validates');
+  const mispaired = { ...pairedVd, phaedo_user_configuration: { ...pairedVd.phaedo_user_configuration, fingerprint_id: 'someone-else' } };
+  ok(vVD(mispaired).some((e) => /§5\.4 pairing/.test(e)), 'a sibling paired to a different fingerprint is caught (§5.4)');
+  // and the SW maintenance transform produces exactly that valid paired shape
+  const maintained = UC.maintainUserConfiguration({ phaedo_fingerprint: fpWithRules }, { now: '2026-07-19T00:00:00.000Z' });
+  ok(vVD(maintained).length === 0, 'the vault write finalizer (maintainUserConfiguration) emits a conformant paired vault');
 }
 
 // ── §4.2 per-layer vocabulary ↔ the producer catalog (P2.1, OQ13) ─────────────
@@ -373,7 +442,7 @@ console.log('\nconformance statement ↔ reality (§11.3)');
   ok(conf.levels.includes(0) && conf.profiles.includes('Projection Consumer'), 'declares Level 0 / Projection Consumer');
   ok(/phaedo:\/\/fingerprint\/projection/.test(conf.level_0_surface), 'Level-0 surface names the real MCP projection resource');
   // The categories reported as passing must be exactly the populated vector sets.
-  const vectorFiles = ['canonicalization.json', 'fingerprint-conformance.json', 'consultation.json', 'resolution.json'];
+  const vectorFiles = ['canonicalization.json', 'fingerprint-conformance.json', 'consultation.json', 'resolution.json', 'envelope.json', 'export.json', 'injection.json', 'signing.json'];
   const populated = vectorFiles.map((f) => load(`test-vectors/${f}`).category).sort();
   const claimedPass = Object.entries(conf.test_vector_results).filter(([, v]) => v === 'pass').map(([k]) => k).sort();
   ok(claimedPass.join(',') === populated.join(','), `reported-passing categories (${claimedPass.join(',')}) match the populated vector sets`);

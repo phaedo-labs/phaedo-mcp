@@ -70,10 +70,20 @@ async function integration() {
   // machine — including a phone-paired dev box whose pairing.json would otherwise
   // make the server pull from an unreachable phone (with no cache in this fresh
   // state dir). PHAEDO_FINGERPRINT takes precedence over pairing (fingerprint-source.js).
+  // PHAEDO_PAIRING is pinned to a nonexistent path in the fixture state dir for the
+  // same reason: the escalation channel reads the pairing record directly (not via
+  // the fingerprint source), so a real mcp/pairing.json on a paired dev machine
+  // would otherwise deposit this test's escalation to the OWNER'S ACTUAL PHONE over
+  // the live relay — and the "no relay lane" assertions below would fail.
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve(BASE_DIR, 'server.js')],
-    env: { ...process.env, PHAEDO_MCP_STATE_DIR: stateDir, PHAEDO_FINGERPRINT: resolve(BASE_DIR, 'sample-fingerprint.json') },
+    env: {
+      ...process.env,
+      PHAEDO_MCP_STATE_DIR: stateDir,
+      PHAEDO_FINGERPRINT: resolve(BASE_DIR, 'sample-fingerprint.json'),
+      PHAEDO_PAIRING: join(stateDir, 'pairing.json'),
+    },
   });
   const client = new Client({ name: 'phaedo-smoke', version: '0.0.0' });
   await client.connect(transport);
@@ -166,6 +176,23 @@ async function integration() {
   ok(epayload.request_type === 'escalation' && epayload.escalated === false && epayload.status !== 'pending',
     'an escalate with no relay lane never fabricates a pending decision (unreachable or not-blocking)');
   ok(!/"layers"|persona_strength|phaedo_fingerprint/.test(JSON.stringify(epayload)), 'escalate leaks no layer content (§10.4)');
+
+  // §8.3 signing ceremony: phaedo_sign_mandate + phaedo_sign_status register. With the
+  // smoke fixture's fingerprint (no standing authorizations), the mandate is empty, so the
+  // tool must report nothing_to_sign — never synthesize an empty (= unlimited) credential.
+  ok(tools.tools.some(t => t.name === 'phaedo_sign_mandate'), 'sign_mandate tool registered');
+  ok(tools.tools.some(t => t.name === 'phaedo_sign_status'), 'sign_status tool registered');
+  const sign = await client.callTool({ name: 'phaedo_sign_mandate', arguments: {} });
+  ok(!sign.isError, 'sign_mandate call ok');
+  const spayload = sign.structuredContent || JSON.parse(sign.content[0].text);
+  ok(spayload.request_type === 'sign_mandate' && spayload.status !== 'signed',
+    'sign_mandate never returns a signature by itself (deposit-only)');
+  ok(!/"layers"|persona_strength|phaedo_fingerprint/.test(JSON.stringify(spayload)), 'sign_mandate leaks no layer content');
+  // The status tool needs a request_id + mandate; a bad request just fails to resolve, never throws.
+  const st = await client.callTool({ name: 'phaedo_sign_status', arguments: { request_id: 'nope', mandate: { mandate_type: 'intent' } } });
+  ok(!st.isError, 'sign_status call ok');
+  const stp = st.structuredContent || JSON.parse(st.content[0].text);
+  ok(stp.request_type === 'sign_status' && stp.status !== 'signed', 'sign_status with an unknown id does not fabricate a signature');
 
   // enhanced_privacy → tool error
   const errCall = await client.callTool({

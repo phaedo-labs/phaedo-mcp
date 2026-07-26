@@ -200,7 +200,7 @@ ok(deriveDelegationSignals([receipt('proceed', 'modified', [drv('speedQuality', 
 ok(deriveDelegationSignals([receipt('proceed', 'rejected', [drv('speedQuality', -1)]), receipt('escalate', 'approved', [drv('speedQuality', 1)])]).length === 0, 'opposing corrections cancel — caution (reject a proceed) vs bold (approve an escalate) → no signal');
 
 // Domain scoping: a financial override is tagged to that domain.
-ok(deriveDelegationSignals([receipt('proceed', 'rejected', [drv('speedQuality', -1)], 'financial')])[0].domain === 'financial', 'a delegated correction is scoped to the action domain');
+ok(deriveDelegationSignals([receipt('proceed', 'rejected', [drv('speedQuality', -1)], 'financial')])[0].domain === 'finance', 'a delegated correction is scoped to the CANONICAL action domain (financial → finance), so spellings do not fragment the overlay');
 
 // End-to-end: the override reshapes a real consult. Subject is fast in their OWN work,
 // but rejected a delegated "proceed" → consult now leans cautious (act-as-me).
@@ -237,7 +237,7 @@ ok(buildDelegationPromotions(overrides(3), { suggested_rules: [{ status: 'sugges
 ok(buildDelegationPromotions([...overrides(2), receipt('proceed', 'approved', [drv('speedQuality', -1)])], {}).length === 0, 'honesty rail: approved outcomes never count toward the floor');
 ok(buildDelegationPromotions(overrides(3, 'escalate', 1, undefined, 'approved'), {})[0].decision.value === 'speed', 'PROCEEDING against cautious signals (approved) promotes a BOLD delegation rule');
 ok(buildDelegationPromotions(overrides(3, 'escalate', 1), {}).length === 0, 'agreeing with cautious signals (rejected) does NOT promote a bold rule (direction-fix)');
-ok(buildDelegationPromotions(overrides(3, 'proceed', -1, 'financial'), {})[0].decision.domain === 'financial', 'promotion is scoped to the action domain');
+ok(buildDelegationPromotions(overrides(3, 'proceed', -1, 'financial'), {})[0].decision.domain === 'finance', 'promotion is scoped to the CANONICAL action domain (financial → finance), so one concept is one card');
 
 // ── an ENDORSED (authored, portable) delegation rule shapes consult too ─────────
 // After the subject endorses, the rule lives in standing_rules (decision.origin:delegation)

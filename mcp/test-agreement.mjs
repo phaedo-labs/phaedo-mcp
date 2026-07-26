@@ -10,7 +10,7 @@ import { mkdtemp } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-import { computeAgreement, DECISIVE, DEFAULT_WINDOW_DAYS } from './agreement.js';
+import { computeAgreement, agreementDigest, DECISIVE, DEFAULT_WINDOW_DAYS } from './agreement.js';
 import { buildReceipt, appendReceipt, updateUserAction, readReceipts } from './receipts.js';
 
 let pass = 0;
@@ -96,7 +96,54 @@ console.log('\nintegration (receipts store → agreement)');
   await updateUserAction(dir, a.receipt_id, 'approved');
   await updateUserAction(dir, b.receipt_id, 'rejected');
   const live = computeAgreement(await readReceipts(dir));
-  ok(live.domains.financial.scored === 2 && live.domains.financial.rate === 1, 'end-to-end: append → user_action → 2/2 agreement');
+  // Keyed by the CANONICAL domain — buildReceipt resolves `financial` to `finance`
+  // via the §10.2 vocabulary, so both spellings accumulate in ONE class.
+  ok(live.domains.finance.scored === 2 && live.domains.finance.rate === 1, 'end-to-end: append → user_action → 2/2 agreement');
+}
+
+// ── agreementDigest: the bounded slice that rides the receipts digest ─────────
+console.log('\nagreementDigest (transportable summary)');
+{
+  const d = agreementDigest(fixture, { now: NOW });
+  ok(d.window_days === DEFAULT_WINDOW_DAYS, 'digest carries the window');
+  ok(d.overall.rate === computeAgreement(fixture, { now: NOW }).overall.rate, 'digest overall rate matches the full report');
+
+  // Slim shape: counts + rate only. No window object, no derived text, and nothing
+  // that could carry layer content or rationale into the payload.
+  ok(Object.keys(d).sort().join(',') === 'domains,overall,window_days', `digest top-level keys are bounded — got ${Object.keys(d).sort().join(',')}`);
+  ok(Object.keys(d.overall).sort().join(',') === 'agreements,awaiting_user_action,disagreements,non_directional,rate,scored',
+    `bucket keys are bounded — got ${Object.keys(d.overall).sort().join(',')}`);
+
+  // A domain with nothing SCORED says nothing — spending payload on it is waste.
+  const unscoredOnly = [rcpt('mystery', 'escalate', null, 1), rcpt('mystery', 'clarify', null, 2)];
+  const u = agreementDigest(unscoredOnly, { now: NOW });
+  ok(Object.keys(u.domains).length === 0, 'domains with zero scored receipts are dropped');
+  ok(u.overall.non_directional === 2, 'but they still count in the overall bucket');
+
+  // Bounded + deterministic: the digest is a last-write-wins payload, so an
+  // unstable key order would make every deposit look like a change.
+  const many = [];
+  for (let i = 0; i < 20; i++) many.push(rcpt(`dom${String(i).padStart(2, '0')}`, 'proceed', 'approved', 1));
+  const capped = agreementDigest(many, { now: NOW, domainCap: 3 });
+  ok(Object.keys(capped.domains).length === 3, 'domain map is capped');
+  ok(JSON.stringify(agreementDigest(many, { now: NOW })) === JSON.stringify(agreementDigest(many, { now: NOW })),
+    'digest is deterministic for the same input');
+  const tieOrder = Object.keys(capped.domains);
+  ok(JSON.stringify(tieOrder) === JSON.stringify([...tieOrder].sort()), 'equal-scored domains break ties by name');
+
+  // Ranked by evidence, not alphabetically — the busiest domains survive the cap.
+  const ranked = agreementDigest(
+    [rcpt('quiet', 'proceed', 'approved', 1), ...Array.from({ length: 5 }, () => rcpt('busy', 'proceed', 'approved', 1))],
+    { now: NOW, domainCap: 1 },
+  );
+  ok(Object.keys(ranked.domains)[0] === 'busy', 'the cap keeps the best-evidenced domain');
+
+  // Degenerate inputs must not throw — this runs inside a best-effort deposit.
+  for (const bad of [null, undefined, [], 'nope', 42]) {
+    const r = agreementDigest(bad, { now: NOW });
+    ok(r && r.overall.scored === 0 && r.overall.rate === null, `agreementDigest(${JSON.stringify(bad)}) degrades to an empty summary`);
+  }
+  ok(agreementDigest(many, { now: NOW, domainCap: 0 }).domains && Object.keys(agreementDigest(many, { now: NOW, domainCap: 0 }).domains).length === 0, 'domainCap 0 → no domains, no throw');
 }
 
 console.log(`\n✓ agreement: ${pass} checks passed`);

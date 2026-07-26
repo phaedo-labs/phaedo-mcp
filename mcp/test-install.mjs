@@ -9,8 +9,9 @@ import { tmpdir } from 'os';
 import {
   detectClients, serverEntry, readConfig, mergeServerEntry, removeServerEntry, applyToClient,
   claudeSettingsPath, hookCommand, mergeSessionStartHook, removeSessionStartHook, applyCodeHook,
-  buildConsultEnv, detectConsultModel,
+  buildConsultEnv, detectConsultModel, purgeLocalData, applyCaptureModelConfig,
 } from './install.mjs';
+import { mkdirSync } from 'fs';
 
 let pass = 0, fail = 0;
 function ok(cond, msg) { if (cond) { pass++; } else { fail++; console.error(`  ✗ ${msg}`); } }
@@ -189,6 +190,62 @@ try {
   rmSync(hookHome, { recursive: true, force: true });
 } finally {
   rmSync(tmp, { recursive: true, force: true });
+}
+
+section('purgeLocalData — leave nothing behind on uninstall --purge');
+{
+  const stateDir = mkdtempSync(join(tmpdir(), 'phaedo-state-'));
+  const baseDir  = mkdtempSync(join(tmpdir(), 'phaedo-base-'));
+  writeFileSync(join(stateDir, 'cache.key'), 'k');
+  writeFileSync(join(stateDir, 'cache.enc'), 'c');
+  writeFileSync(join(stateDir, 'receipts.enc'), 'r');
+  writeFileSync(join(baseDir, 'pairing.json'), '{}');
+  writeFileSync(join(baseDir, 'identity.json'), '{}');
+
+  // Dry run touches nothing but reports what it would remove.
+  const preview = purgeLocalData({ stateDir, baseDir, dryRun: true });
+  ok(preview.length === 3, 'dry-run lists state dir + pairing + identity');
+  ok(existsSync(join(stateDir, 'cache.key')), 'dry-run deletes nothing');
+
+  const removed = purgeLocalData({ stateDir, baseDir });
+  ok(removed.length === 3, 'purge reports the 3 targets removed');
+  ok(!existsSync(stateDir), 'state dir (cache.key/cache.enc/receipts.enc) is gone');
+  ok(!existsSync(join(baseDir, 'pairing.json')), 'pairing.json is gone');
+  ok(!existsSync(join(baseDir, 'identity.json')), 'identity.json is gone');
+
+  // Idempotent: purging again with nothing present removes nothing, no throw.
+  const again = purgeLocalData({ stateDir, baseDir });
+  ok(again.length === 0, 're-purge with nothing present is a clean no-op');
+}
+
+console.log('\n--capture-model: the state-dir on-switch for the hook model detector');
+{
+  const stateDir = mkdtempSync(join(tmpdir(), 'phaedo-capmodel-install-'));
+  const cfgPath = join(stateDir, 'capture-model.json');
+  const tags = (names) => async () => ({ ok: true, json: async () => ({ models: names.map((n) => ({ name: n })) }) });
+
+  // ON, model present at the endpoint.
+  let r = await applyCaptureModelConfig('llama3.1:8b', { stateDir, fetchImpl: tags(['llama3.1:8b']) });
+  ok(r.status === 'configured' && /model found/.test(r.detail), 'configured + present probe note');
+  ok(JSON.parse(readFileSync(cfgPath, 'utf8')).model === 'llama3.1:8b', 'config file written with the model');
+  // ON with a custom url; model missing at the endpoint → pull hint, config still written.
+  r = await applyCaptureModelConfig('qwen3:8b', { stateDir, url: 'http://box:11434', fetchImpl: tags(['llama3.1:8b']) });
+  ok(r.status === 'configured' && /ollama pull qwen3:8b/.test(r.detail), 'missing model → pull hint (advisory only)');
+  ok(JSON.parse(readFileSync(cfgPath, 'utf8')).url === 'http://box:11434', 'custom url persisted');
+  // Endpoint down → still configured, honest note (hook fails safe at runtime).
+  r = await applyCaptureModelConfig('llama3.1:8b', { stateDir, fetchImpl: async () => { throw new Error('down'); } });
+  ok(r.status === 'configured' && /not reachable/.test(r.detail), 'unreachable endpoint → note, config still written');
+  // OFF removes the file; a second OFF is a clean no-op.
+  r = await applyCaptureModelConfig('off', { stateDir });
+  ok(r.status === 'removed' && !existsSync(cfgPath), 'off → file removed');
+  r = await applyCaptureModelConfig('off', { stateDir });
+  ok(r.status === 'unchanged', 'off when already off → unchanged');
+  // Dry-run writes nothing; a missing name is an error, not a write.
+  r = await applyCaptureModelConfig('llama3.1:8b', { stateDir, dryRun: true, fetchImpl: tags([]) });
+  ok(r.status === 'would-write' && !existsSync(cfgPath), 'dry-run → no file');
+  r = await applyCaptureModelConfig(undefined, { stateDir });
+  ok(r.status === 'error' && !existsSync(cfgPath), 'missing model name → error, nothing written');
+  rmSync(stateDir, { recursive: true, force: true });
 }
 
 console.log(`\n${fail === 0 ? '✓' : '✗'} install: ${pass} passed, ${fail} failed`);

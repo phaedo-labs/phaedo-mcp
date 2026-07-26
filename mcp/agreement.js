@@ -77,6 +77,44 @@ export function computeAgreement(receipts, { windowDays = DEFAULT_WINDOW_DAYS, n
   };
 }
 
+// ── The transportable summary (receipts digest → phone) ───────────────────────
+// `computeAgreement` is the full local report; this is the bounded slice that rides
+// the `agent_to_phone` receipts digest so the subject can see how well their oracle
+// is tracking them, per domain, without opening a terminal.
+//
+// It is derived ENTIRELY from the subject's own receipts and only ever travels
+// between the subject's own devices (ciphertext over the relay), so it raises no
+// §10.4 question — but it still carries no layer content, no rationale, and no
+// `drivers`: counts and a rate, nothing else.
+//
+// Bounded on purpose (the digest is a last-write-wins payload, so it must not grow
+// without limit): unscored domains are dropped (a domain with nothing scored says
+// nothing), the rest are ranked by `scored` and capped. Ties break by name so the
+// payload is DETERMINISTIC — an unstable key order would make every deposit look
+// like a change.
+export const DIGEST_DOMAIN_CAP = 8;
+
+const slimBucket = (b) => ({
+  rate: b.rate,
+  scored: b.scored,
+  agreements: b.agreements,
+  disagreements: b.disagreements,
+  non_directional: b.non_directional,
+  awaiting_user_action: b.awaiting_user_action,
+});
+
+// (receipts, { windowDays, now, domainCap }) -> { window_days, overall, domains }
+export function agreementDigest(receipts, { windowDays = DEFAULT_WINDOW_DAYS, now = Date.now(), domainCap = DIGEST_DOMAIN_CAP } = {}) {
+  const report = computeAgreement(receipts, { windowDays, now });
+  const domains = {};
+  Object.entries(report.domains)
+    .filter(([, b]) => b.scored > 0)
+    .sort((a, b) => (b[1].scored - a[1].scored) || a[0].localeCompare(b[0]))
+    .slice(0, Math.max(0, domainCap))
+    .forEach(([name, b]) => { domains[name] = slimBucket(b); });
+  return { window_days: windowDays, overall: slimBucket(report.overall), domains };
+}
+
 // ── Dev CLI: `node agreement.js` / `npm run agreement` — local readout only ───
 // Decrypts the local receipt store with the local key; nothing leaves the device.
 // NOT product UX and NOT fed back into deference (see header).

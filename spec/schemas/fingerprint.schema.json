@@ -33,55 +33,38 @@
         },
         "standing_rules": {
           "type": "array",
-          "description": "Subject-AUTHORED standing instructions (§5.2 shape) — the single home for authored rules (Proposal 0007), carried on the fingerprint as the v0.1 A-home (supersedes the standalone consult_policies array; migrates to the §5 User Configuration sibling in v0.2). Authored content: stated once, no producer confidence score, applied VERBATIM, never inferred. The extraction pipeline MUST NOT write this array (locked by scripts/test_standing_rules_invariant.mjs). `kind:\"instruction\"` is a verbatim rule, optionally bound to a Decision&Risk dimension via `decision` (which marks that dimension authored-canonical in §4.7 resolution). `kind:\"authorization\"` is a deterministic §10.5 gate (match/effect, shared $defs); if it also carries `text` it injects too.",
-          "items": {
-            "type": "object",
-            "required": ["kind"],
-            "properties": {
-              "instruction_id": { "type": "string", "description": "Stable id (UUID v4)." },
-              "kind": { "enum": ["instruction", "authorization"], "description": "Variant discriminator (Proposal 0003 model)." },
-              "text": { "type": "string", "maxLength": 1000, "description": "Verbatim rule (§5.2). UTF-8, NFC. Injected as-is — MUST NOT be summarized. Required for instruction; optional for authorization (present → the gate also injects)." },
-              "exception": { "type": "string", "maxLength": 1000, "description": "OPTIONAL boundary, rendered '(Exception: …)'." },
-              "scope": { "enum": ["global", "domain", "task"], "description": "§5.2 scope. v0.1: only `global` normative; use `decision.domain` / `match.domains` for v0.1 domain scoping." },
-              "priority": { "type": "integer", "description": "§5.2 ordering hint; lower injects first. Ties broken by created_at." },
-              "decision": {
-                "type": "object",
-                "description": "OPTIONAL (instruction). Binding to one Decision&Risk dimension; present → the projection/consultation treats it authored-canonical (§4.7 'authored overrides inferred').",
-                "required": ["dimension"],
-                "properties": {
-                  "dimension": { "type": "string", "description": "evidence_threshold | ambiguity_posture | options_vs_recommendation | speed_vs_quality | reversible_vs_irreversible (spec/layer-vocabulary.json)." },
-                  "polarity": { "enum": ["positive", "negative"], "description": "§4.3. A negative authored rule is canonical over a contradicting inferred positive." },
-                  "value": { "type": "string", "description": "OPTIONAL catalog value token for the bound dimension (e.g. `quality`, `ask`, `more_cautious`). Carried when the rule came from a selected template (`source:\"interview_template\"`); lets a future resolver bind a precise value rather than just a cautious nudge. Free-text / edited rules omit it." },
-                  "domain": { "type": "string", "description": "OPTIONAL domain scope, same case-insensitive substring namespace as action_descriptor.domain / match.domains." },
-                  "origin": { "enum": ["self", "delegation"], "description": "OPTIONAL — the act-for-me vs act-as-me channel (mirrors signals[].origin). Absent/`self` = how the subject decides themselves. `delegation` = how they want an agent to act on their behalf — carried when the rule was endorsed from a delegation-promoted suggestion (`source:\"delegation_promotion\"`), so the resolver/projection treat it as the act-as-me preference for that dimension." }
-                }
-              },
-              "match": { "$ref": "consultation-policy.schema.json#/$defs/match", "description": "AUTHORIZATION only — §10.5 matcher. Optional (matchless = matches all)." },
-              "effect": { "$ref": "consultation-policy.schema.json#/$defs/effect", "description": "AUTHORIZATION only — §10.5 effect. Required when kind=authorization." },
-              "note": { "type": "string", "description": "AUTHORIZATION only — resolver rationale_hint source (back-compat with consult_policies.note)." },
-              "expires_at": { "type": "string", "description": "AUTHORIZATION only — OPTIONAL RFC 3339. Conditional/revocable authority (§10.5): the authorization lapses (stops applying) once this instant passes. ENFORCED (authority-narrowing, fail-safe)." },
-              "agents": { "type": "array", "items": { "type": "string" }, "description": "AUTHORIZATION only — OPTIONAL, RESERVED. Scope to specific agent identities; NOT yet enforced (awaits authenticated agent identity — a self-asserted agent_id would be false security)." },
-              "source": { "enum": ["interview", "interview_template", "delta_promotion", "delegation_promotion"], "description": "OPTIONAL provenance: how the rule was authored — hand-written in onboarding (`interview`), endorsed from a selected seed template in onboarding (`interview_template`), by endorsing a delta-promoted inferred-pattern suggestion (`delta_promotion`), or by endorsing a delegation-promoted suggestion built from the subject's consult override history (`delegation_promotion`, an act-as-me rule). All are authored: endorsement is the write." },
-              "created_at": { "type": "string", "description": "RFC 3339." },
-              "updated_at": { "type": "string", "description": "RFC 3339." }
-            },
-            "allOf": [
-              { "if": { "properties": { "kind": { "const": "instruction" } } }, "then": { "required": ["text"] } },
-              { "if": { "properties": { "kind": { "const": "authorization" } } }, "then": { "required": ["effect"] } }
-            ]
-          }
+          "description": "Subject-AUTHORED standing instructions (§5.2 shape) — the v0.1 A-home for authored rules (Proposal 0007), carried on the fingerprint so they travel and inject today (supersedes the standalone consult_policies array; migrating to the §5 User Configuration sibling — see user-configuration.schema.json, whose $defs/standing_instruction is now the CANONICAL entry shape; this array $refs it so the two homes cannot drift). Authored content: stated once, no producer confidence score, applied VERBATIM, never inferred. The extraction pipeline MUST NOT write this array (locked by scripts/test_standing_rules_invariant.mjs). `kind:\"instruction\"` is a verbatim rule, optionally bound to a Decision&Risk dimension via `decision` (which marks that dimension authored-canonical in §4.7 resolution). `kind:\"authorization\"` is a deterministic §10.5 gate (match/effect, shared $defs); if it also carries `text` it injects too.",
+          "items": { "$ref": "user-configuration.schema.json#/$defs/standing_instruction" }
+        },
+        "commitments": {
+          "$ref": "commitments.schema.json#/$defs/commitments",
+          "description": "Subject-AUTHORED decision STATE (§5.7) — what the subject has already decided or is currently bound by, as distinct from the eight layers' model of HOW they decide. Carried on the fingerprint as the v0.1 A-home for the same reason `standing_rules` is: it travels on every sync today with no new transport (the §5 sibling home follows the same migration path). NOT a layer, and NOT subject to the §4.6 episodic rail — a commitment names counterparties and dates by nature, which is precisely why it is consumed ONLY at the §10 consultation boundary and never enters the §9 projection. Authored only: a producer MUST NOT infer a commitment (`source` is an enum of exactly `subject`). Every entry is time-bounded, and no entry may expand autonomy (`effect` cannot be `autoproceed`)."
         },
         "suggested_rules": {
           "type": "array",
           "description": "Delta-promotion STAGING queue (Proposal 0007 §E) — NOT authored content. When the extraction engine's inferred Decision&Risk signals show a pattern recurring (observed/corroborated, observation_count ≥ floor) that is not already an authored rule, the producer MAY stage a `suggested` candidate here for the subject to review. This is the one place the producer writes a rule-shaped object — and it is explicitly a *proposal*, never injected and never consulted. Only the subject's endorsement (rule-review.js `endorseSuggestion`) turns a suggestion into a `standing_rules` entry; that endorsement is the authored write. A rejected suggestion stays here with `status:\"dismissed\"` so it is not re-proposed.",
           "items": {
             "type": "object",
-            "required": ["status", "decision"],
+            "required": ["status"],
+            "allOf": [
+              {
+                "if": { "properties": { "kind": { "const": "authorization" } }, "required": ["kind"] },
+                "then": { "required": ["match", "effect", "require_binding"] },
+                "else": { "required": ["decision"] }
+              }
+            ],
             "properties": {
               "suggestion_id": { "type": "string", "description": "Stable id (UUID v4)." },
               "status": { "enum": ["suggested", "dismissed"], "description": "`suggested` awaits the subject; `dismissed` was rejected (kept for audit + to suppress re-proposal)." },
-              "source": { "enum": ["delta_promotion", "delegation_promotion"], "description": "How the suggestion was produced: `delta_promotion` = the extraction engine staged an established INFERRED Decision&Risk pattern (Proposal 0007 §E); `delegation_promotion` = the MCP server staged an established pattern from the subject's consult OVERRIDE history (an act-as-me suggestion — `decision.origin` is `delegation`)." },
+              "kind": { "enum": ["instruction", "authorization"], "default": "instruction", "description": "What endorsing this suggestion would author. Default `instruction` (a verbatim injected rule bound to a Decision&Risk dimension). `authorization` stages a §10.5 GATE — an autonomy-EXPANDING pre-decision — and therefore carries `match`/`effect`/`require_binding` instead of `decision`." },
+              "source": { "enum": ["delta_promotion", "delegation_promotion", "autonomy_promotion"], "description": "How the suggestion was produced: `delta_promotion` = the extraction engine staged an established INFERRED Decision&Risk pattern (Proposal 0007 §E); `delegation_promotion` = the MCP server staged an established pattern from the subject's consult OVERRIDE history (an act-as-me suggestion — `decision.origin` is `delegation`); `autonomy_promotion` = the MCP server staged a §10.5 `autoproceed` authorization from a class of actions the subject has repeatedly and deliberately APPROVED (§10.7)." },
               "proposed_text": { "type": "string", "maxLength": 1000, "description": "A first-person candidate rule the review UI shows; the subject edits it before endorsing." },
+              "match": { "$ref": "consultation-policy.schema.json#/$defs/match", "description": "AUTHORIZATION suggestions only — the §10.5 matcher the endorsed authorization would carry." },
+              "effect": { "$ref": "consultation-policy.schema.json#/$defs/effect", "description": "AUTHORIZATION suggestions only — the §10.5 effect. A producer MUST NOT propose anything but `autoproceed` (§10.7): any other effect is either already the safe default or a restriction the subject should author deliberately." },
+              "require_binding": { "type": "boolean", "description": "AUTHORIZATION suggestions only — REQUIRED and MUST be `true` (§10.7). A proposed relaxation may only apply to requests bound to a concrete call (§10.2)." },
+              "expires_at": { "type": "string", "description": "AUTHORIZATION suggestions only — REQUIRED in practice (§10.7): a proposed relaxation is always time-bounded, so an autonomy grant the subject stops wanting lapses on its own." },
+              "agents": { "type": "array", "items": { "type": "string" }, "description": "AUTHORIZATION suggestions only — OPTIONAL (§10.7 + §10.5). The paired clients whose actions EARNED this proposed grant, as opaque `client_id` values taken from the §10.6 receipts' SERVING client — never the self-asserted `agent_id`. Scopes the grant so endorsing it grants only the client that demonstrated the pattern, rather than every paired client. ABSENT means unscoped, which is what a producer MUST emit when no contributing receipt carries a `client_id` (pre-attribution history); writing an empty array instead would stage a grant that can never fire, since `[]` is a scope naming no client. An endorsing consumer MUST carry this field through to the authored rule VERBATIM — dropping it would widen a scoped proposal into an unscoped authorization." },
+              "note": { "type": "string", "maxLength": 280, "description": "AUTHORIZATION suggestions only — the rationale_hint the endorsed rule surfaces when it fires." },
               "decision": {
                 "type": "object",
                 "required": ["dimension"],
@@ -101,7 +84,9 @@
                   "last_observed": { "type": "string" },
                   "evidence_basis": { "type": "string" },
                   "value": {},
-                  "signal_id": { "type": "string" }
+                  "signal_id": { "type": "string" },
+                  "distinct_days": { "type": "integer", "minimum": 0, "description": "AUTONOMY suggestions (§10.7) — how many distinct UTC days the supporting approvals span. Volume alone is not evidence of deliberation; spread is." },
+                  "agreement_rate": { "type": "number", "minimum": 0, "maximum": 1, "description": "AUTONOMY suggestions (§10.7) — the oracle's agreement rate in this domain at proposal time." }
                 }
               },
               "created": { "type": "string", "description": "RFC 3339." }
@@ -155,6 +140,12 @@
         "extensions": {
           "type": "object",
           "description": "Producer-specific or experimental fields (§4.5). Keys SHOULD be producer-prefixed; consumers MUST ignore unknown keys."
+        },
+        "signatures": {
+          "type": "array",
+          "maxItems": 0,
+          "items": { "type": "object" },
+          "description": "RESERVED for §8.3 asymmetric signing. v0.1 producers MUST NOT populate this field; that prohibition is ENFORCED here as maxItems: 0 rather than left to prose, so a v0.1 validator rejects a populated field instead of silently accepting an unspecified shape. The entry shape (algorithm, key id, signature bytes, signed_at, and what the signature covers) is specified when the signing flow lands — see docs/roadmap/asymmetric-signing-scope-2026-07-23.md. Reserving the name is what §8.3 already claims the schema does."
         }
       }
     },

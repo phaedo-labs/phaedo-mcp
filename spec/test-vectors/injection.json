@@ -1,0 +1,136 @@
+{
+  "category": "TC-INJ",
+  "describes": "Section 9 injection — request/response invariants and the §9.5 error codes, exercised against the reference buildInjectionResponse over the fixed vault payload in `vault`. Success vectors assert §9.3 required fields + layer selection; error vectors assert the exact §9.5 code. Note: persona_strength_below_threshold is a DECLARED code the v0.1 reference never emits (thresholding is consumer policy) — listed for completeness, no vector triggers it. Runner: spec/test-vectors.mjs.",
+  "vault": {
+    "phaedo_fingerprint": {
+      "phaedo_protocol_version": "0.1",
+      "fingerprint_id": "vector-fp-0001",
+      "subject_id": "vector-subj-0001",
+      "schema_revision": 4,
+      "persona_strength": 0.62,
+      "layers": {
+        "surface": {
+          "confidence": 0.5,
+          "signals": [
+            {
+              "field": "directness",
+              "polarity": "positive",
+              "value": "high"
+            }
+          ],
+          "summary": "- Directness: high"
+        },
+        "decision_and_risk": {
+          "confidence": 0.5,
+          "signals": [
+            {
+              "field": "speed_vs_quality",
+              "polarity": "positive",
+              "value": "quality"
+            }
+          ],
+          "summary": "- Speed vs quality: quality"
+        }
+      }
+    }
+  },
+  "vectors": [
+    {
+      "test_id": "T-PHAEDO-INJ-0001",
+      "description": "Standard all-layers request succeeds with every §9.3 required field.",
+      "request": {
+        "request_type": "injection",
+        "session_context": {
+          "platform": "vector"
+        },
+        "mode": "standard",
+        "requested_layers": [
+          "all"
+        ],
+        "consumer_id": "vector-consumer"
+      },
+      "expect": {
+        "ok": true,
+        "layers_included": [
+          "surface",
+          "decision_and_risk"
+        ],
+        "fingerprint_id": "vector-fp-0001",
+        "mode": "standard"
+      }
+    },
+    {
+      "test_id": "T-PHAEDO-INJ-0002",
+      "description": "Layer-subset request narrows layers_included to the existing requested layer.",
+      "request": {
+        "request_type": "injection",
+        "mode": "standard",
+        "requested_layers": [
+          "surface"
+        ],
+        "consumer_id": "vector-consumer"
+      },
+      "expect": {
+        "ok": true,
+        "layers_included": [
+          "surface"
+        ]
+      }
+    },
+    {
+      "test_id": "T-PHAEDO-INJ-0003",
+      "description": "enhanced_privacy without Stained Glass → mode_not_supported (§9.5).",
+      "request": {
+        "mode": "enhanced_privacy"
+      },
+      "expect": {
+        "error": "mode_not_supported"
+      }
+    },
+    {
+      "test_id": "T-PHAEDO-INJ-0004",
+      "description": "Unknown mode → request_malformed (§9.5).",
+      "request": {
+        "mode": "telepathy"
+      },
+      "expect": {
+        "error": "request_malformed"
+      }
+    },
+    {
+      "test_id": "T-PHAEDO-INJ-0005",
+      "description": "Non-array requested_layers → request_malformed (§9.5).",
+      "request": {
+        "mode": "standard",
+        "requested_layers": "surface"
+      },
+      "expect": {
+        "error": "request_malformed"
+      }
+    },
+    {
+      "test_id": "T-PHAEDO-INJ-0006",
+      "description": "No layer in the request exists → layer_not_available (§9.5).",
+      "request": {
+        "mode": "standard",
+        "requested_layers": [
+          "nonexistent_layer"
+        ]
+      },
+      "expect": {
+        "error": "layer_not_available"
+      }
+    },
+    {
+      "test_id": "T-PHAEDO-INJ-0007",
+      "description": "Empty vault (no fingerprint) → decryption_failed (§9.5, the could-not-obtain-plaintext case).",
+      "vault_override": {},
+      "request": {
+        "mode": "standard"
+      },
+      "expect": {
+        "error": "decryption_failed"
+      }
+    }
+  ]
+}

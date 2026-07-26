@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getphaedo.com/spec/commitments.schema.json",
+  "title": "Phaedo Commitments (decision state)",
+  "description": "Subject-authored DECISION STATE — what the subject has already decided or is currently bound by, as opposed to how they decide (Phaedo Protocol v0.1 §5.7). The eight fingerprint layers are dispositional: they model a person's style, and §4.6 forbids episodic content in them precisely so a behavioral model never becomes a dossier. But an agent acting on someone's behalf needs more than their style — it needs to not contradict what they have already committed to. Without this, the oracle can answer 'you would be cautious here' when the correct answer is 'you already decided this'. Commitments are authored (never inferred, §5.6), always time-bounded, and consumed ONLY at the consultation boundary — they are never part of the §9 persona projection.",
+  "type": "object",
+  "properties": {
+    "commitments": { "$ref": "#/$defs/commitments" }
+  },
+  "$defs": {
+    "commitments": {
+      "type": "array",
+      "description": "Active decision state. Entries are pruned once lapsed; a consumer MUST ignore a lapsed entry regardless.",
+      "items": { "$ref": "#/$defs/commitment" }
+    },
+    "commitment": {
+      "type": "object",
+      "required": ["commitment_id", "statement", "effect", "expires_at"],
+      "properties": {
+        "commitment_id": { "type": "string", "description": "Stable identifier (UUID v4)." },
+        "kind": {
+          "enum": ["commitment", "constraint"],
+          "default": "commitment",
+          "description": "`commitment` = something the subject has already decided or promised ('I told that vendor no'). `constraint` = a condition currently limiting them ('on leave until the 4th', 'hiring frozen'). Both gate the same way; the distinction is for the authoring surface and for the subject's own review."
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "The subject's own words. Episodic by nature — it will name counterparties, dates and amounts — which is exactly why commitments are NOT injected and why the §4.6 episodic rail deliberately does not apply here (the same carve-out §5.3 example content gets). Disclosed to a calling agent only when `disclose` is true."
+        },
+        "domains": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Domains this commitment governs, matched case-insensitively by substring against the §10.2 action descriptor's domain — the same namespace §10.5 authorizations use. An entry with no domains governs every domain, which is deliberate but broad; an authoring surface SHOULD encourage scoping."
+        },
+        "effect": {
+          "enum": ["escalate", "decline", "bias_cautious"],
+          "description": "How a matching action resolves. CONSTRAINED BY DESIGN: a commitment may only make an agent MORE deferential. `autoproceed` is not expressible here — decision state records what the subject is bound by, and being bound is never a reason to grant an agent more latitude. Autonomy expansion has exactly one path (a §10.5 authorization, §10.7)."
+        },
+        "disclose": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether `statement` may be sent to a calling agent in the §10.3 `rationale_hint`. Defaults FALSE: a commitment typically names a third party, and an arbitrary agent learning 'the subject already told ACME no' is a real disclosure, not a rationale. When false the resolver returns a generic hint and the full statement is shown only to the subject (on their own device, e.g. the escalation card)."
+        },
+        "expires_at": {
+          "type": "string",
+          "description": "REQUIRED RFC 3339. Decision state is perishable — a commitment that outlives its situation silently blocks work forever. Enforced exactly like a §10.5 authorization's `expires_at`: once lapsed the entry stops applying."
+        },
+        "created_at": { "type": "string", "description": "RFC 3339." },
+        "updated_at": { "type": "string", "description": "RFC 3339." },
+        "source": {
+          "enum": ["subject"],
+          "description": "Provenance. Only `subject` is valid in v0.1: commitments are authored content (§5.6) and a producer MUST NOT infer them. Declared as an enum so an inferred value is a schema violation rather than a convention."
+        }
+      }
+    }
+  }
+}

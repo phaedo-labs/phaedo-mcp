@@ -1,0 +1,77 @@
+{
+  "_note": "Anamnesis §10.2 published domain vocabulary. The canonical identifiers an `action_descriptor.domain` may take, plus the aliases that map onto them. PUBLISHED deliberately: the alternative considered was a private synonym table inside the reference resolver, which would have put decision semantics somewhere the subject cannot read and a third-party implementer cannot reproduce. Free text remains legal — an unrecognized domain is recorded and matched exactly as before — so this vocabulary adds identity, never a gate. The reference implementation embeds a copy in mcp/lib/domain.js; mcp/test-domain.mjs asserts the two cannot drift.",
+  "vocabulary_version": "0.1",
+
+  "_aliases_note": "SYNONYMS ONLY — an alias means 'the same concept at the same risk', never 'a kind of'. A child->parent mapping (crypto_trading -> finance, paralegal -> legal) is FORBIDDEN here and the reason is concrete: it would let a grant authored for the general class cover a narrower, riskier one the subject never demonstrated. That is the same defect that made dotted-suffix stripping (finance.crypto_trading -> finance) unsafe in v0.1.55. When in doubt, leave a term OUT: an unrecognized domain still works, it just does not merge.",
+
+  "domains": {
+    "finance": {
+      "description": "Moving, committing, or reporting money — payments, transfers, invoices, budgets, expenses.",
+      "aliases": ["financial", "finances", "money", "billing", "invoicing", "expenses", "accounting"]
+    },
+    "investing": {
+      "description": "Buying or selling financial positions. SEPARATE from `finance` on purpose — a spending guardrail and a trading guardrail are not the same authority.",
+      "aliases": ["investment", "investments", "trading", "brokerage", "portfolio"]
+    },
+    "legal": {
+      "description": "Contracts, agreements, filings, compliance obligations, and anything creating legal exposure.",
+      "aliases": ["contracts", "compliance", "regulatory"]
+    },
+    "health": {
+      "description": "Medical care, appointments, records, and health decisions.",
+      "aliases": ["medical", "healthcare", "wellness", "clinical"]
+    },
+    "scheduling": {
+      "description": "Calendar and time commitments — meetings, appointments, reminders, availability.",
+      "aliases": ["calendar", "meetings", "appointments", "availability", "booking"]
+    },
+    "communication": {
+      "description": "Outbound messages to other people — email, chat, DMs, replies.",
+      "aliases": ["email", "outbound email", "messaging", "messages", "comms", "correspondence"]
+    },
+    "writing": {
+      "description": "Drafting and editing content that is not itself an outbound message.",
+      "aliases": ["drafting", "editing", "content", "copywriting", "documentation"]
+    },
+    "research": {
+      "description": "Gathering, reading, and summarizing information.",
+      "aliases": ["analysis", "reading", "summarization", "search"]
+    },
+    "shopping": {
+      "description": "Acquiring goods or services — orders, carts, subscriptions, procurement.",
+      "aliases": ["purchasing", "purchase", "procurement", "orders", "commerce", "ecommerce"]
+    },
+    "travel": {
+      "description": "Trips and their arrangements — flights, lodging, itineraries, ground transport.",
+      "aliases": ["trips", "flights", "lodging", "itinerary", "transportation"]
+    },
+    "engineering": {
+      "description": "Writing, reviewing, and shipping software and infrastructure.",
+      "aliases": ["code", "coding", "software", "development", "dev", "devops", "infrastructure", "deployment"]
+    },
+    "data": {
+      "description": "Files and records — reading, writing, moving, deleting, exporting.",
+      "aliases": ["files", "records", "storage", "database", "export"]
+    },
+    "security": {
+      "description": "Credentials, access, permissions, and key material.",
+      "aliases": ["access", "permissions", "credentials", "authentication", "authorization"]
+    },
+    "people": {
+      "description": "Employment and the people side of an organization — hiring, performance, compensation, policy.",
+      "aliases": ["hr", "human resources", "hiring", "recruiting", "personnel", "staffing"]
+    },
+    "social": {
+      "description": "Publishing to an audience — social posts, public profiles, community channels.",
+      "aliases": ["social media", "posting", "publishing", "community"]
+    },
+    "support": {
+      "description": "Responding to customers or users on behalf of the subject or their organization.",
+      "aliases": ["customer support", "customer service", "helpdesk", "tickets"]
+    },
+    "admin": {
+      "description": "Accounts, settings, subscriptions, and operational housekeeping.",
+      "aliases": ["administration", "settings", "accounts", "subscriptions", "operations", "ops"]
+    }
+  }
+}

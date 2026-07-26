@@ -93,6 +93,38 @@ console.log('\nthe clarify push policy is subject-configurable, globally + per-d
   ok(resolveClarifyMode(irreversibleWriting, perDomain) === 'never' && !shouldEscalate('clarify', irreversibleWriting, perDomain), 'an irreversible WRITING clarify is suppressed (by_domain: never)');
   ok(resolveClarifyMode({ domain: 'medical', reversible: false }, perDomain) === 'consequential', 'an unlisted domain falls back to the default (consequential)');
 
+  // ── by_domain matching: exact / dot-hierarchy only, longest wins, deterministic ──
+  // Regression suite for the substring over-merge (site 3, 2026-07-22). The old
+  // `domain.includes(k) || k.includes(domain)` silently suppressed notifications for
+  // accidental substrings, and returned different modes for one action depending on
+  // JSON key order.
+  {
+    const req = (domain) => ({ domain, reversible: true, magnitude: 'low' });
+
+    // THE BUG: a general key must not govern an accidental-substring action. This is
+    // the dangerous direction — a suppressed clarify never reaches the phone.
+    const legal = mergeEscalationPolicy({ clarify: { default: 'always', by_domain: { legal: 'never' } } });
+    ok(resolveClarifyMode(req('legal'), legal) === 'never', 'an exact-domain rule still applies');
+    ok(resolveClarifyMode(req('paralegal'), legal) === 'always', 'a `legal: never` rule does NOT swallow a paralegal action — it falls to the default');
+    const care = mergeEscalationPolicy({ clarify: { default: 'always', by_domain: { care: 'never' } } });
+    ok(resolveClarifyMode(req('healthcare'), care) === 'always', 'a `care` rule does NOT swallow healthcare');
+
+    // Dot-hierarchy: a parent key governs its subdomains, but not the reverse.
+    const fin = mergeEscalationPolicy({ clarify: { default: 'consequential', by_domain: { finance: 'never' } } });
+    ok(resolveClarifyMode(req('finance.crypto_trading'), fin) === 'never', 'a parent rule (`finance`) covers a dotted subdomain');
+    const crypto = mergeEscalationPolicy({ clarify: { default: 'always', by_domain: { 'finance.crypto_trading': 'never' } } });
+    ok(resolveClarifyMode(req('finance'), crypto) === 'always', 'a subdomain rule does NOT reach up to govern the bare parent');
+    ok(resolveClarifyMode(req('devops'), mergeEscalationPolicy({ clarify: { default: 'always', by_domain: { ops: 'never' } } })) === 'always',
+      'no reverse-substring match either (`ops` does not govern `devops`)');
+
+    // Most-specific wins, and it is DETERMINISTIC regardless of key order.
+    const specificFirst = mergeEscalationPolicy({ clarify: { default: 'consequential', by_domain: { 'finance.crypto_trading': 'always', finance: 'never' } } });
+    const generalFirst  = mergeEscalationPolicy({ clarify: { default: 'consequential', by_domain: { finance: 'never', 'finance.crypto_trading': 'always' } } });
+    ok(resolveClarifyMode(req('finance.crypto_trading'), specificFirst) === 'always', 'the longest applicable key wins (specific beats general)');
+    ok(resolveClarifyMode(req('finance.crypto_trading'), specificFirst) === resolveClarifyMode(req('finance.crypto_trading'), generalFirst),
+      'and the result is identical whatever the JSON key order — the old first-match-wins bug is gone');
+  }
+
   // sources: vault policy merged UNDER the local-file override
   const vd = { phaedo_fingerprint: { escalation_policy: { clarify: { default: 'never' } } } };
   ok(resolveClarifyMode(lowWriting, loadEscalationPolicy(vd)) === 'never', 'a vault-embedded escalation_policy applies (portable)');

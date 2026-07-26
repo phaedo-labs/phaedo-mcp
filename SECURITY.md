@@ -41,7 +41,7 @@ Especially interesting: anything that breaks the project's core guarantees —
 
 | Version | Supported |
 |---|---|
-| 0.1.x (latest) | ✅ |
+| 0.2.x (latest) | ✅ |
 
 The npm package `phaedo-mcp` tracks this repository; fixes ship as patch
 releases.

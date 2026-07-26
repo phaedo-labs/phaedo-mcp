@@ -1,0 +1,96 @@
+{
+  "category": "TC-ENV",
+  "describes": "Section 7 encryption envelope — AES-256-GCM unwrap + integrity (tag/AAD/ciphertext tamper, wrong key). Unwrap-direction only: GCM encryption is iv-randomized, so conformance is proven by decrypting these fixed envelopes and by each implementation round-tripping its own wrap() output. Generated from the reference Phaedo.Envelope with a pinned iv; runner: spec/test-vectors.mjs.",
+  "vectors": [
+    {
+      "test_id": "T-PHAEDO-ENV-0001",
+      "description": "AES-256-GCM unwrap: a well-formed §7.2 envelope under the fixed key yields the canonical artifact bytes.",
+      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "envelope": {
+        "phaedo_envelope_version": "0.1",
+        "alg": "AES-256-GCM",
+        "iv": "oKGio6Slpqeoqaqr",
+        "ciphertext": "nToaRCusZ80SF-69cyWpulKWe2b31DYD7iNA9lKbRTHjVGvdw0MqWC3vJvJyWPCMNX0nKwfyIAVjPWQwwhnh1drf4E0KlcrV2MCMceigrda-KZH_vuP_E4sZWriLuCn9_eFI323L_Oi89yQg6uSMWk0kGIzkF-tTXKaqzcIw0GHnZ9ETpieiLRUxl-x6aOyL9aSBSc64m-mZouKF3ahARKV3c-7ADzJl62VFAFXwhs9GBNG6cQXGW-_jKUs59HYkXVki61rll8-AKCKlLEdG6juNxtIdFb3bma4qyC6zuA1FYQIRiE-k",
+        "tag": "4LirzTt7AbvuznbS5M5IqA",
+        "metadata": {
+          "artifact_kind": "fingerprint",
+          "fingerprint_id": "vector-fp-0001",
+          "created_at": "2026-07-19T00:00:00Z"
+        }
+      },
+      "expected_plaintext": "{\"fingerprint_id\":\"vector-fp-0001\",\"layers\":{\"surface\":{\"confidence\":0.5,\"signals\":[{\"field\":\"directness\",\"polarity\":\"positive\",\"value\":\"high\"}]}},\"phaedo_protocol_version\":\"0.1\",\"schema_revision\":4,\"subject_id\":\"vector-subj-0001\"}"
+    },
+    {
+      "test_id": "T-PHAEDO-ENV-0002",
+      "description": "Tag tamper: flipping one bit of the GCM tag MUST fail authentication (no plaintext).",
+      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "envelope": {
+        "phaedo_envelope_version": "0.1",
+        "alg": "AES-256-GCM",
+        "iv": "oKGio6Slpqeoqaqr",
+        "ciphertext": "nToaRCusZ80SF-69cyWpulKWe2b31DYD7iNA9lKbRTHjVGvdw0MqWC3vJvJyWPCMNX0nKwfyIAVjPWQwwhnh1drf4E0KlcrV2MCMceigrda-KZH_vuP_E4sZWriLuCn9_eFI323L_Oi89yQg6uSMWk0kGIzkF-tTXKaqzcIw0GHnZ9ETpieiLRUxl-x6aOyL9aSBSc64m-mZouKF3ahARKV3c-7ADzJl62VFAFXwhs9GBNG6cQXGW-_jKUs59HYkXVki61rll8-AKCKlLEdG6juNxtIdFb3bma4qyC6zuA1FYQIRiE-k",
+        "tag": "4LirzTt7AbvuznbS5M5IqQ",
+        "metadata": {
+          "artifact_kind": "fingerprint",
+          "fingerprint_id": "vector-fp-0001",
+          "created_at": "2026-07-19T00:00:00Z"
+        }
+      },
+      "expect_error": true
+    },
+    {
+      "test_id": "T-PHAEDO-ENV-0003",
+      "description": "AAD tamper: altering the cleartext metadata breaks the AAD binding (§7.3) — decrypt MUST fail even though ciphertext and tag are untouched.",
+      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "envelope": {
+        "phaedo_envelope_version": "0.1",
+        "alg": "AES-256-GCM",
+        "iv": "oKGio6Slpqeoqaqr",
+        "ciphertext": "nToaRCusZ80SF-69cyWpulKWe2b31DYD7iNA9lKbRTHjVGvdw0MqWC3vJvJyWPCMNX0nKwfyIAVjPWQwwhnh1drf4E0KlcrV2MCMceigrda-KZH_vuP_E4sZWriLuCn9_eFI323L_Oi89yQg6uSMWk0kGIzkF-tTXKaqzcIw0GHnZ9ETpieiLRUxl-x6aOyL9aSBSc64m-mZouKF3ahARKV3c-7ADzJl62VFAFXwhs9GBNG6cQXGW-_jKUs59HYkXVki61rll8-AKCKlLEdG6juNxtIdFb3bma4qyC6zuA1FYQIRiE-k",
+        "tag": "4LirzTt7AbvuznbS5M5IqA",
+        "metadata": {
+          "artifact_kind": "fingerprint",
+          "fingerprint_id": "vector-fp-EVIL",
+          "created_at": "2026-07-19T00:00:00Z"
+        }
+      },
+      "expect_error": true
+    },
+    {
+      "test_id": "T-PHAEDO-ENV-0004",
+      "description": "Ciphertext tamper: flipping one bit of the ciphertext MUST fail authentication.",
+      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "envelope": {
+        "phaedo_envelope_version": "0.1",
+        "alg": "AES-256-GCM",
+        "iv": "oKGio6Slpqeoqaqr",
+        "ciphertext": "nToaRCusZ80SF-69cyWpulKWe2b31DYD7iNA9lKbRTHjVGvdw0MqWC3vJvJyWPCMNX0nKwfyIAVjPWQwwhnh1drf4E0KlcrV2MCMceigrda-KZH_vuP_E4sZWriLuCn9_eFI323L_Oi89yQg6uSMWk0kGIzkF-tTXKaqzcIw0GHnZ9ETpieiLRUxl-x6aOyL9aSBSc64m-mZouKF3ahARKV3c-7ADzJl62VFAFXwhs9GBNG6cQXGW-_jKUs59HYkXVki61rll8-AKCKlLEdG6juNxtIdFb3bma4qyC6zuA1FYQIRiE-l",
+        "tag": "4LirzTt7AbvuznbS5M5IqA",
+        "metadata": {
+          "artifact_kind": "fingerprint",
+          "fingerprint_id": "vector-fp-0001",
+          "created_at": "2026-07-19T00:00:00Z"
+        }
+      },
+      "expect_error": true
+    },
+    {
+      "test_id": "T-PHAEDO-ENV-0005",
+      "description": "Wrong key MUST fail (a different 32-byte key cannot open the envelope).",
+      "key_hex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "envelope": {
+        "phaedo_envelope_version": "0.1",
+        "alg": "AES-256-GCM",
+        "iv": "oKGio6Slpqeoqaqr",
+        "ciphertext": "nToaRCusZ80SF-69cyWpulKWe2b31DYD7iNA9lKbRTHjVGvdw0MqWC3vJvJyWPCMNX0nKwfyIAVjPWQwwhnh1drf4E0KlcrV2MCMceigrda-KZH_vuP_E4sZWriLuCn9_eFI323L_Oi89yQg6uSMWk0kGIzkF-tTXKaqzcIw0GHnZ9ETpieiLRUxl-x6aOyL9aSBSc64m-mZouKF3ahARKV3c-7ADzJl62VFAFXwhs9GBNG6cQXGW-_jKUs59HYkXVki61rll8-AKCKlLEdG6juNxtIdFb3bma4qyC6zuA1FYQIRiE-k",
+        "tag": "4LirzTt7AbvuznbS5M5IqA",
+        "metadata": {
+          "artifact_kind": "fingerprint",
+          "fingerprint_id": "vector-fp-0001",
+          "created_at": "2026-07-19T00:00:00Z"
+        }
+      },
+      "expect_error": true
+    }
+  ]
+}
