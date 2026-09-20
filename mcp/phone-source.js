@@ -25,7 +25,7 @@
 import { readFile } from 'fs/promises';
 import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
-import { Phaedo, b64uEnc, b64uDec } from './lib/phaedo-crypto.js';
+import { Phaedo, b64uEnc, b64uDec, Capabilities } from './lib/phaedo-crypto.js';
 
 const { Identity, Kdf, Envelope } = Phaedo;
 const EXPIRY_SKEW_MS = 30 * 1000; // re-auth this early to avoid edge-of-expiry races
@@ -124,6 +124,12 @@ async function authorize(rec, deps) {
       scopes: ['profile:full'],
       eph_ext_pub: b64uEnc(eph.publicKey),
       eph_mac: b64uEnc(extMac),
+      // What this agent can do, for the §5 step-3 upgrade gate. The agent reads authored
+      // content but has no channel of its own to the extension, so the phone records this and
+      // couriers it on. Rides the authorize body because that is the one request the agent
+      // makes that the phone authenticates AND that recurs — sessions expire, so the record
+      // refreshes while the agent is in use and goes stale when it is not, which is the intent.
+      capabilities: Capabilities.advertise('agent'),
     }),
     signal: AbortSignal.timeout(APPROVE_TIMEOUT_MS),   // waits on a human, not a machine
   });

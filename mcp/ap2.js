@@ -61,8 +61,13 @@ function matchToConstraints(match) {
   // cap. Mapping it to `max_amount` (as this did before `amount_lt` existed) would
   // have told a merchant the subject capped spending at exactly the figure above
   // which they wanted extra scrutiny. It is carried as an annotation instead.
-  if (typeof m.amount_lt === 'number' && Number.isFinite(m.amount_lt)) {
-    out.max_amount = m.amount_lt;
+  // Both ceiling forms map to `max_amount`, and when both are present the LOWER wins — AP2 has
+  // one field and no way to say "exclusive", so the credential must not assert more headroom than
+  // the rule grants. `amount_lte: 20` becomes `max_amount: 20`; `amount_lt: 20` also becomes 20,
+  // which is the pre-existing (slightly generous by one cent) mapping, unchanged.
+  const ceilings = [m.amount_lt, m.amount_lte].filter((v) => typeof v === 'number' && Number.isFinite(v));
+  if (ceilings.length) {
+    out.max_amount = Math.min(...ceilings);
   }
   if (typeof m.amount_gt === 'number' && Number.isFinite(m.amount_gt)) {
     out.annotations = { ...(out.annotations || {}), anamnesis_amount_floor: m.amount_gt };

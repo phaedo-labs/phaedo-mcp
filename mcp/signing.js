@@ -33,19 +33,29 @@ export function canonicalStringify(value) {
     throw new Error('canonicalStringify: non-finite numbers are not expressible in RFC 8785 JSON');
   }
   if (value === null || typeof value !== 'object') {
-    const s = JSON.stringify(value);   // throws natively on BigInt
+    const s = JSON.stringify(typeof value === 'string' ? value.normalize('NFC') : value);
     if (s === undefined) throw new Error('canonicalStringify: a ' + typeof value + ' is not expressible in JSON');
     return s;
   }
   if (Array.isArray(value)) {
     return '[' + value.map(v => (notJson(v) ? 'null' : canonicalStringify(v))).join(',') + ']';
   }
-  const keys = Object.keys(value).sort();   // UTF-16 code-unit order (RFC 8785 §3.2.3)
-  const parts = [];
-  for (const k of keys) {
+  // §6.2 NFC — "Implementations MUST normalize text to NFC before canonicalization to avoid
+  // signature breakage from equivalent but byte different strings." It was implemented nowhere.
+  // This is the VERIFIER: if the phone ever normalizes and this does not, every signature it
+  // produces fails here, over text that looks identical in any log. KEYS too, and a post-NFC
+  // collision is REJECTED rather than silently dropping one. Byte-identical to envelope.js and
+  // mobile/src/lib/envelope.ts.
+  const seen = new Map();
+  for (const k of Object.keys(value)) {
     if (notJson(value[k])) continue;
-    parts.push(JSON.stringify(k) + ':' + canonicalStringify(value[k]));
+    const nk = k.normalize('NFC');
+    if (seen.has(nk)) throw new Error('canonicalStringify: keys collide under NFC: ' + JSON.stringify(k));
+    seen.set(nk, value[k]);
   }
+  const keys = [...seen.keys()].sort();   // UTF-16 code-unit order (RFC 8785 §3.2.3), post-NFC
+  const parts = [];
+  for (const k of keys) parts.push(JSON.stringify(k) + ':' + canonicalStringify(seen.get(k)));
   return '{' + parts.join(',') + '}';
 }
 

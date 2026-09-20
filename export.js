@@ -17,13 +17,24 @@
     return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
   }
 
-  // Sorted-key serialization. MUST match envelope.js canonicalStringify and the
-  // mobile side (fingerprint.ts), or the digest will not verify.
+  // THE canonicalizer, not a copy of it (C2). This file carried the pre-v0.1.44 *light* version
+  // under a comment asserting it "MUST match envelope.js canonicalStringify" — which was simply
+  // false, and had been since v0.1.44 moved envelope.js to full RFC 8785. The two disagreed on
+  // exactly the inputs that matter:
+  //   - a non-finite number: light emitted `null`, full THROWS (silent digest corruption vs a
+  //     loud failure)
+  //   - an undefined-valued object property: light emitted `"k":undefined`, which is not JSON at
+  //     all, so the §8.2 bootstrap digest was computed over a string no other implementation
+  //     could reproduce
+  //   - a function or symbol in an array: light emitted `undefined`, full emits `null`
+  //
+  // So it is taken from envelope.js, which popup.html loads first (line 683, before this file at
+  // 689). A copy is what let them drift for four spec revisions with a comment insisting they
+  // could not; there is one implementation per surface now.
   function canonicalStringify(value) {
-    if (value === null || typeof value !== 'object') return JSON.stringify(value)
-    if (Array.isArray(value)) return '[' + value.map(canonicalStringify).join(',') + ']'
-    const keys = Object.keys(value).sort()
-    return '{' + keys.map(k => JSON.stringify(k) + ':' + canonicalStringify(value[k])).join(',') + '}'
+    const impl = globalThis.Phaedo && globalThis.Phaedo.Envelope && globalThis.Phaedo.Envelope.canonicalStringify
+    if (!impl) throw new Error('export.js: envelope.js must load first (it owns canonicalStringify)')
+    return impl(value)
   }
 
   /**

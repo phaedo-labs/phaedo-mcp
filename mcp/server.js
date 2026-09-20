@@ -44,9 +44,17 @@ async function emitReceipt(via, args, response, drivers) {
     // Recording both is the point; they are believed to different degrees.
     const receipt = buildReceipt({ via, agentId: args?.agent_id, clientId: CONSULT_OPTS.clientId, request: args, response, drivers });
     await appendReceipt(defaultStateDir(), receipt, { cap: RECEIPTS_CAP });
+    // RETURN THE HANDLE. The tool descriptions instruct the agent to record what the subject
+    // decided, but no tool gave it anything to name — so `phaedo_record_outcome` defaulted to
+    // 'latest' and attributed the decision to whatever receipt happened to be newest. A $12k
+    // payment rejection landed on an unrelated writing consult. That feeds deriveDelegationSignals
+    // and the §10.7 promotion evidence, so a mis-attributed override both erodes caution on the
+    // wrong dimension AND removes the contrary evidence that would have disqualified the right one.
+    return receipt.receipt_id;
   } catch (e) {
     process.stderr.write(`[phaedo-mcp] receipt write failed (consultation still answered): ${e.message}\n`);
   }
+  return null;
 }
 
 // Effects that let an agent act with LESS oversight. Only these are withheld when the read
@@ -210,7 +218,12 @@ if (existsSync(ESCALATION_POLICY_PATH)) {
   catch (e) { process.stderr.write(`[phaedo-mcp] ignoring malformed escalation policy (${ESCALATION_POLICY_PATH}): ${e.message}\n`); }
 }
 
-const server = new McpServer({ name: 'phaedo', version: '0.2.2' });
+// Read from package.json rather than a literal: this string was pinned at '0.2.2'
+// while package.json moved on, so the handshake advertised a version that had not
+// been the package's for two months. One source of truth; test-package-closure.mjs
+// asserts the two agree.
+const PKG_VERSION = JSON.parse(readFileSync(join(BASE_DIR, 'package.json'), 'utf8')).version;
+const server = new McpServer({ name: 'phaedo', version: PKG_VERSION });
 
 // ── Tool: phaedo_request_injection (binding §3.1) ─────────────────────────────
 server.registerTool(
@@ -317,12 +330,18 @@ server.registerTool(
   async (args) => {
     try {
       const vd = await loadConsultVd(BASE_DIR);   // fingerprint + act-as-me delegation overlay
-      const response = await resolveConsultation(vd, args || {}, CONSULT_OPTS);
+      // STALE-AUTHORITY GUARD. This used to be applied to phaedo_check_authorization ALONE, so
+      // the two tools an autonomous agent actually uses answered from a possibly-revoked cached
+      // profile with no downgrade and no provenance. That is the 2026-07-25 device defect (a
+      // revoked $500 grant honoured from a 22h cache) still live on the paths that matter most.
+      const response = withStaleAuthorityGuard(
+        await resolveConsultation(vd, args || {}, CONSULT_OPTS), vd);
       // Provenance for the local audit receipt only — the cues that drove this
       // (never in `response`; §10.4). Best-effort: a failure must not block the answer.
       let drivers = [];
       try { drivers = consultDrivers(vd, args || {}); } catch { /* provenance is non-critical */ }
-      await emitReceipt('phaedo_consult', args, response, drivers); // every resolution, abstains included
+      const receiptId = await emitReceipt('phaedo_consult', args, response, drivers); // every resolution, abstains included
+      if (receiptId) response.receipt_id = receiptId;   // the handle for phaedo_record_outcome
       await maybeDepositDelegationPromotions(vd);                    // act-as-me promotion (best-effort)
       await maybeDepositReceiptsDigest();                            // G1+G2 audit channel — refresh the phone's view
       return {
@@ -387,12 +406,19 @@ server.registerTool(
       // MORE deferential (that direction is safe and useful phone-absent); it may never be
       // the basis for proceeding unattended. Same asymmetry as `expires_at`, `require_binding`
       // and the §10.2 domain aliases: narrow freely, widen never.
-      const response = withStaleAuthorityGuard(checkAuthorization(vd, req, CONSULT_OPTS), vd);
+      // The receipt is gated on `authorization_matched`, which the guard CLEARS — so the one
+      // case that most needs an audit trail (an authorization fired against a possibly-revoked
+      // cached grant and had to be withheld) used to leave no record at all. §10.6: "a matched
+      // deterministic pre-flight is a resolution and produces a receipt."
+      const preGuard = checkAuthorization(vd, req, CONSULT_OPTS);
+      const matchedPreGuard = preGuard.authorization_matched === true;
+      const response = withStaleAuthorityGuard(preGuard, vd);
       // A matched pre-flight IS a resolved decision (the authorization fired) →
       // receipt. A no-match is not a decision — no receipt (keeps the store from
       // filling with probes; the follow-up phaedo_consult writes its own).
-      if (response.authorization_matched) {
-        await emitReceipt('phaedo_check_authorization', req, { signal: response.signal, confidence: 1.0, deference_level: 'high' });
+      if (matchedPreGuard) {
+        const rid = await emitReceipt('phaedo_check_authorization', req, { signal: response.signal, confidence: 1.0, deference_level: 'high' });
+        if (rid) response.receipt_id = rid;
         await maybeDepositReceiptsDigest();                          // G1+G2 audit channel — only on a matched preflight (no-match writes no receipt)
       }
       return {
@@ -517,10 +543,15 @@ server.registerTool(
       // Cache-preferred read: escalation shouldn't trigger a fingerprint-read authorize
       // prompt on top of the decision card the subject already answers (one prompt, not two).
       const vd = await loadConsultVd(BASE_DIR, { preferCache: true });
-      const response = await resolveConsultation(vd, req, CONSULT_OPTS);
+      // Guarded like the others, and it needs it MOST: this path reads the cache
+      // UNCONDITIONALLY, so without the guard it always reasoned from a possibly-stale profile
+      // and then told the agent the signal was not blocking — i.e. "just proceed", and never
+      // wake the subject, on authority that may have been revoked hours earlier.
+      const response = withStaleAuthorityGuard(
+        await resolveConsultation(vd, req, CONSULT_OPTS), vd);
       let drivers = [];
       try { drivers = consultDrivers(vd, req); } catch { /* non-critical */ }
-      await emitReceipt('phaedo_escalate', req, response, drivers);   // the decision being escalated
+      const escReceiptId = await emitReceipt('phaedo_escalate', req, response, drivers);   // the decision being escalated
       await maybeDepositReceiptsDigest();                              // G1+G2 audit channel
 
       // Self-gate: only wake the subject for a genuinely blocking signal. `escalate`
@@ -533,6 +564,7 @@ server.registerTool(
         const body = {
           request_type: 'escalation', escalated: false, signal: response.signal,
           rationale_hint: response.rationale_hint, confidence: response.confidence,
+          ...(escReceiptId ? { receipt_id: escReceiptId } : {}),
           ...(subThresholdClarify ? { reason: 'clarify_below_threshold' } : {}),
           message: subThresholdClarify
             ? 'Low-stakes clarification — handle it in your own flow (ask your clarifying question, or make a reasonable assumption and state it). It will surface in the user\'s review queue; no need to wake them. Raise an explicit escalate if you truly need a live decision.'
@@ -546,6 +578,11 @@ server.registerTool(
       const body = dep.deposited
         ? {
             request_type: 'escalation', escalated: true, status: 'pending',
+            // Both handles. `request_id` correlates the live decision; `receipt_id` names the
+            // §10.6 record to mark afterwards. Returning only the first meant
+            // phaedo_escalation_status could not mark correctly and a real-time approve/deny was
+            // auto-recorded onto whatever receipt happened to be newest.
+            ...(escReceiptId ? { receipt_id: escReceiptId } : {}),
             request_id: dep.request_id, window_ms: dep.window_ms, expires_at: dep.expires_at,
             signal: response.signal, rationale_hint: response.rationale_hint,
             // The relay's push-to-wake result for a BACKGROUNDED phone: { sent, reason }.

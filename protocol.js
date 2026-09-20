@@ -33,6 +33,13 @@
       // pair_key so the store-and-forward fingerprint envelope is decryptable by
       // either device with no live session — and never reuses any other role's key.
       FP_SYNC_KEY:     'phaedo-fp-sync-v0.1',
+      // §5 User Configuration SYNC key. A distinct sub-key of pair_key, mirroring
+      // FP_SYNC_KEY. NOT the §5.5 `phaedo:config:enc:v0.1` context — that one derives
+      // from MASTER key material, which never leaves the vault device (§7.4), so it can
+      // only ever encrypt a device-LOCAL at-rest copy. A config artifact that must be
+      // opened by the paired extension has to be sealed under something both devices can
+      // derive, which is pair_key. The two keys coexist: §5.5 for at-rest, this for transit.
+      CONFIG_SYNC_KEY: 'phaedo-config-sync-v0.1',
     },
 
     /** Sizes in bytes — fixed by spec §7.2. */

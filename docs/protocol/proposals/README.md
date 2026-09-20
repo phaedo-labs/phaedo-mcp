@@ -6,10 +6,11 @@ change to the normative spec is a **proposal first** — reviewed and explicitly
 `v0.1.md` with a change-log entry and (where applicable) a `spec/schemas/` update +
 conformance test.
 
-**Status: all proposals 0001–0008 below are FOLDED / COMPLETE** — each index row links the
+**Status: proposals 0001–0008 below are FOLDED / COMPLETE** — each index row links the
 version it landed in (the one still-open item is `0003`'s B-half, the §5 configuration home,
-targeted for v0.2). This dir is now the folded-proposal archive; the review discipline above
-still governs any *new* proposal, which stays queued until folded. The stable, build-against
+targeted for v0.2). **`0009` is the first new DRAFT since the archive closed** (2026-09-13, not
+normative, blocked on outcome data). The review discipline above still governs any *new*
+proposal, which stays queued until folded. The stable, build-against
 surfaces are the shapes in `v0.1.md` (§9 injection, §10.2/10.3 consultation request/response,
 §10.5 policies).
 
@@ -25,6 +26,7 @@ surfaces are the shapes in `v0.1.md` (§9 injection, §10.2/10.3 consultation re
 | 0006 | Conflict resolution + provenance | new §4.7 | ✅ **FOLDED v0.1.20; FULLY INTEGRATED v0.1.24–v0.1.28** — deterministic evidence-tier resolution + ≥3 floor → `unresolved` (`resolveDimension()`/`resolveLayer()` + TC-RESOLVE vectors), then a reviewable `conflict_records[]` queue (v0.1.24), **injection suppression** of open-conflict dimensions (v0.1.27), and the symmetric **consult suppression** (v0.1.28, `mcp/consult-core.js`). Closes the autonomy-class defect; provenance = the `signals[]` log (no wire change). |
 | 0007 | Authored decision rules (one home: `standing_rules`) | §4.3/§4.7 + §5.2 + §9 + §10.5 | ✅ **FOLDED v0.1.21 (2026-06-17, rev. 3).** One authored home `standing_rules[]` (§5.2 shape, A-home) with a `kind: instruction \| authorization` discriminator — realizes 0003's model and supersedes the standalone `consult_policies` (kept as a deprecated read-path alias, migrated). Instruction = verbatim rule + optional `decision` binding (marks DR dimension authored-canonical, §4.7); authorization = §10.5 matcher→effect gate. Renders §9.1's unbuilt standing-instruction projection. **Rejects** an in-layer evidence tier (rev. 1, §4.6/§5 confusion) and standalone `anchors[]`. Diffs: `0007-schema-diffs.md`; onboarding bank: `0007-onboarding-decision-rules.json`. **§E delta promotion** folded v0.1.22 and **fully wired 2026-06-19** — `promoteRules()` now runs in the live extraction pass (`extraction/offscreen-runner.js`/`orchestrator.js`) and the review surface moved to the extension popup ("Rules to review" card + shared attention dot; the interview `Review.jsx` was removed). |
 | 0008 | Fingerprint sync mailbox (offline-tolerant, two-way) | new relay mailbox + §8 sync | ✅ **COMPLETE — device-verified, merged 2026-06-18 (PRs #39–#41).** Relay store-and-forward mailbox (`relay/mailbox.js`) holds ciphertext-only fingerprints under `fp_sync_key = HKDF(pair_key)`; clients drain on reconnect (no simultaneous liveness). Directions `to_ext` (phone→ext), `to_phone` (ext→phone), **`agent_to_ext`** (a paired agent → ext, added v0.1.32 for the act-as-me delegation-suggestion deposit — Proposal 0007 §E / delegation promotion), and the receipts-audit-digest lanes **`agent_to_phone`** / **`phone_to_agent`** (v0.1.38–39: MCP deposits a §10.4-safe receipts digest, phone deposits outcome marks back). Authored-content union merge so a rule is never clobbered by whole-fp LWW; separate `rules_updated_at` clock (#41). Spec ref: `docs/protocol/v0.1.md`. |
+| 0009 | Situational precedent at the consultation boundary | §10.3 response + §10.6 (derived) | 📝 **DRAFT 2026-09-13 — not normative.** Recorded as spec **OQ24** (v0.1.67; OQ25 is the sibling synchronization-state question). A **derived, banded precedent** over the §10.6 receipts that already exist — "this shape observed 6×; approved 5, modified 1" — admitted under one principle: *an episode is recorded only when the prediction diverged from what the subject did*, so agreement stores nothing. Rails proposed: banded features only cross §10; below minimum support the field is absent, never a guess; subject-authored outcomes only; **informs, never authorizes**. Explicitly not general memory. **Blocked on outcome data** (measured the same day: 51 receipts, 9 scored, one domain) — Phase 1 of `docs/roadmap/precedent-and-sync-design-2026-09-13.md` precedes any implementation. |
 
 ## Review gate (what folding a proposal in requires)
 

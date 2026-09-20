@@ -59,6 +59,25 @@
     )
   }
 
+  /**
+   * §5 User Configuration sync key. Same role as deriveFpSyncKey, for the sibling
+   * artifact: a distinct sub-key of pair_key so the config envelope is decryptable by
+   * either device with no live session, and never reuses another role's key.
+   *
+   * Deliberately NOT the §5.5 `phaedo:config:enc:v0.1` context. That derives from MASTER
+   * key material, and the master key never leaves the vault device (§7.4) — so it can only
+   * seal a device-LOCAL at-rest copy, never an artifact the paired extension must open.
+   * Both keys exist and do different jobs: §5.5 at rest, this one in transit.
+   */
+  async function deriveConfigSyncKey(pairKey) {
+    return hkdfBytes(
+      pairKey,
+      new Uint8Array(0),
+      utf8(P.HKDF_INFO.CONFIG_SYNC_KEY),
+      P.SIZES.AES_KEY,
+    )
+  }
+
   async function deriveSessionKey(ephemeralShared, sessionToken) {
     return hkdfBytes(
       ephemeralShared,
@@ -123,7 +142,7 @@
 
   globalThis.Phaedo = globalThis.Phaedo || {}
   globalThis.Phaedo.Kdf = {
-    derivePairKey, deriveSeedKey, deriveFpSyncKey, deriveSessionKey, deriveSAS, formatSAS,
+    derivePairKey, deriveSeedKey, deriveFpSyncKey, deriveConfigSyncKey, deriveSessionKey, deriveSAS, formatSAS,
     authEphemeral, verifyAuthEphemeral,
   }
 })()

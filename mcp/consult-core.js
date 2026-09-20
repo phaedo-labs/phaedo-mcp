@@ -382,7 +382,13 @@ export function normalizeRequest(request) {
     // grant. The RECEIPT stores the canonical form (that is the evidence axis).
     domain: typeof ad.domain === 'string' ? (normalizeDomain(ad.domain) || undefined) : undefined,
     reversible: typeof ad.reversible === 'boolean' ? ad.reversible : undefined,
-    magnitude: magnitude || 'medium',
+    // UNSTATED STAYS UNSTATED (v0.1.68). This defaulted to 'medium', which meant the resolver could
+    // never tell "the agent said medium" from "the agent said nothing" — and §10.5 then let a
+    // medium-capped grant fire on the nothing. The receipt now records what was actually sent
+    // (null), which is also what situational precedent (OQ24) needs to band on. The inferred
+    // oracle path still reads an unknown as the middle of the scale (`magnitudeRank`); that is a
+    // disposition heuristic, not a grant, and it is unchanged.
+    magnitude,
     amount: typeof ad.amount === 'number' && isFinite(ad.amount) ? ad.amount : undefined,
     summary: typeof ad.summary === 'string' ? ad.summary : undefined,
     evidenceProvided: Array.isArray(ev) ? ev : (ev != null ? [ev] : []),

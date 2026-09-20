@@ -2,54 +2,127 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://getphaedo.com/spec/consultation-policy.schema.json",
   "title": "Phaedo Consultation Policy",
-  "description": "Subject-authored standing guardrails that OVERRIDE the inferred consultation signal (Phaedo Protocol v0.1 §10.5). DEPRECATED as a standalone array as of Proposal 0007: authored authorizations are now `standing_rules` entries with `kind:\"authorization\"` (the single authored home, fingerprint.schema.json). This schema is retained for (a) the back-compat read path — existing `phaedo_consult_policies` / `phaedo_fingerprint.consult_policies` documents stay valid and are still honored by the resolver — and (b) the `$defs.match` / `$defs.effect` subschemas shared by both `consult_policies.rules[]` and `standing_rules` (authorization variant). Removed in v0.2 with the §5 User Configuration migration.",
+  "description": "Subject-authored standing guardrails that OVERRIDE the inferred consultation signal (Phaedo Protocol v0.1 \u00a710.5). DEPRECATED as a standalone array as of Proposal 0007: authored authorizations are now `standing_rules` entries with `kind:\"authorization\"` (the single authored home, fingerprint.schema.json). This schema is retained for (a) the back-compat read path \u2014 existing `phaedo_consult_policies` / `phaedo_fingerprint.consult_policies` documents stay valid and are still honored by the resolver \u2014 and (b) the `$defs.match` / `$defs.effect` subschemas shared by both `consult_policies.rules[]` and `standing_rules` (authorization variant). Removed in v0.2 with the \u00a75 User Configuration migration.",
   "type": "object",
-  "required": ["rules"],
+  "required": [
+    "rules"
+  ],
   "$defs": {
     "match": {
       "type": "object",
       "description": "All present constraints must hold for the rule to apply. Shared by consult_policies.rules[] and standing_rules (kind:authorization).",
       "properties": {
-        "domains": { "type": "array", "items": { "type": "string" }, "description": "Substring match (case-insensitive) on the action descriptor's domain." },
-        "magnitude_min": { "enum": ["low", "medium", "high"] },
-        "magnitude_max": { "enum": ["low", "medium", "high"] },
-        "reversible": { "type": "boolean" },
-        "amount_gt": { "type": "number", "description": "Numeric FLOOR: matches only when the action descriptor carries an `amount` strictly greater than this (e.g. escalate irreversible spend over 5000). No amount on the action → the threshold rule does not fire." },
-        "amount_lt": { "type": "number", "description": "Numeric CEILING: matches only when the action descriptor carries an `amount` strictly less than this (e.g. auto-proceed reversible purchases under 75). Like `amount_gt`, an action with NO amount does NOT satisfy it — on a relaxing rule an unpriced action must not slip under a ceiling that cannot be checked. Combine with `amount_gt` for a band; both must hold." }
+        "domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Substring match (case-insensitive) on the action descriptor's domain."
+        },
+        "magnitude_min": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "magnitude_max": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "reversible": {
+          "type": "boolean"
+        },
+        "amount_gt": {
+          "type": "number",
+          "description": "Numeric FLOOR: matches only when the action descriptor carries an `amount` strictly greater than this (e.g. escalate irreversible spend over 5000). No amount on the action \u2192 the threshold rule does not fire."
+        },
+        "amount_lt": {
+          "type": "number",
+          "description": "Numeric CEILING: matches only when the action descriptor carries an `amount` strictly less than this (e.g. auto-proceed reversible purchases under 75). Like `amount_gt`, an action with NO amount does NOT satisfy it \u2014 on a relaxing rule an unpriced action must not slip under a ceiling that cannot be checked. Combine with `amount_gt` for a band; both must hold."
+        },
+        "amount_lte": {
+          "type": "number",
+          "description": "Numeric CEILING, INCLUSIVE \u2014 the rule applies at or below this amount. Distinct from `amount_lt` (exclusive): a GRANT bounded by evidence ('auto-proceed up to $20') must include the amount that earned it, while a PROHIBITION keyed to a floor ('escalate above $1,000') is naturally exclusive. When both are present both are enforced, which is the more restrictive reading."
+        }
       }
     },
     "effect": {
-      "enum": ["escalate", "require_human", "decline", "autoproceed", "bias_cautious", "bias_bold"],
-      "description": "Force effects (escalate/require_human→escalate, decline, autoproceed→proceed) are authored authorizations: they set the signal at confidence:1.0, deference:high. bias_* nudges one step along proceed→proceed_with_note→clarify→escalate (keeps the inferred confidence)."
+      "enum": [
+        "escalate",
+        "require_human",
+        "decline",
+        "autoproceed",
+        "bias_cautious",
+        "bias_bold"
+      ],
+      "description": "Force effects (escalate/require_human\u2192escalate, decline, autoproceed\u2192proceed) are authored authorizations: they set the signal at confidence:1.0, deference:high. bias_* nudges one step along proceed\u2192proceed_with_note\u2192clarify\u2192escalate (keeps the inferred confidence)."
     }
   },
   "properties": {
-    "version": { "type": "string" },
+    "version": {
+      "type": "string"
+    },
     "rules": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["effect"],
+        "required": [
+          "effect"
+        ],
         "properties": {
-          "id": { "type": "string" },
-          "match": { "$ref": "#/$defs/match" },
-          "effect": { "$ref": "#/$defs/effect" },
-          "note": { "type": "string", "description": "Surfaced to the agent as the rationale_hint." },
-          "expires_at": { "type": "string", "description": "OPTIONAL RFC 3339. Conditional/revocable authority (§10.5): once this instant passes the authorization is LAPSED and no longer applies (a time-bound, identity-free form of revocation). ENFORCED by the reference resolver — the direction is always authority-narrowing, so it is fail-safe." },
-          "require_binding": { "type": "boolean", "default": false, "description": "OPTIONAL (§10.5). When true, this rule applies only to a request carrying a valid §10.2 `action_binding`. ENFORCED for authority-EXPANDING effects only (`autoproceed`, `bias_bold`) — a rule that makes the agent more deferential keeps applying regardless, or the gate would become a way to shed a guardrail by omitting a field. Authority-narrowing, like `expires_at`. Subjects SHOULD set it on any new `autoproceed`; a producer that PROPOSES an authorization MUST set it." },
-          "agents": { "type": "array", "items": { "type": "string" }, "description": "OPTIONAL, ENFORCED — scope this authorization to specific PAIRED CLIENTS. Entries are opaque, phone-issued client_id values (compared exactly, case-sensitive), matched against the RESOLVER'S OWN identity from its pairing record — never against the self-asserted agent_id, which remains an untrusted audit label. NARROWING-ONLY: an agents-scoped rule is inert for an unlisted or unpaired resolver only when its effect would EXPAND autonomy (autoproceed / bias_bold); a restrictive effect keeps applying regardless, or scoping would become a way to shed a guardrail by running an unlisted client. Inert means 'does not apply' — never broader, never an error. ABSENT and EMPTY differ and the difference is load-bearing: omitting the field leaves the rule unscoped (applies to every client), whereas an empty array is a scope that names no client and therefore matches none. An authoring surface that deselects every client MUST write [] and MUST NOT omit the field, or it would silently grant universal autonomy. Entries MUST be strings; non-string entries are dropped rather than coerced." }
+          "id": {
+            "type": "string"
+          },
+          "match": {
+            "$ref": "#/$defs/match"
+          },
+          "effect": {
+            "$ref": "#/$defs/effect"
+          },
+          "note": {
+            "type": "string",
+            "description": "Surfaced to the agent as the rationale_hint."
+          },
+          "expires_at": {
+            "type": "string",
+            "description": "OPTIONAL RFC 3339. Conditional/revocable authority (\u00a710.5): once this instant passes the authorization is LAPSED and no longer applies (a time-bound, identity-free form of revocation). ENFORCED by the reference resolver \u2014 the direction is always authority-narrowing, so it is fail-safe."
+          },
+          "require_binding": {
+            "type": "boolean",
+            "default": false,
+            "description": "OPTIONAL (\u00a710.5). When true, this rule applies only to a request carrying a valid \u00a710.2 `action_binding`. ENFORCED for authority-EXPANDING effects only (`autoproceed`, `bias_bold`) \u2014 a rule that makes the agent more deferential keeps applying regardless, or the gate would become a way to shed a guardrail by omitting a field. Authority-narrowing, like `expires_at`. Subjects SHOULD set it on any new `autoproceed`; a producer that PROPOSES an authorization MUST set it."
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "OPTIONAL, ENFORCED \u2014 scope this authorization to specific PAIRED CLIENTS. Entries are opaque, phone-issued client_id values (compared exactly, case-sensitive), matched against the RESOLVER'S OWN identity from its pairing record \u2014 never against the self-asserted agent_id, which remains an untrusted audit label. NARROWING-ONLY: an agents-scoped rule is inert for an unlisted or unpaired resolver only when its effect would EXPAND autonomy (autoproceed / bias_bold); a restrictive effect keeps applying regardless, or scoping would become a way to shed a guardrail by running an unlisted client. Inert means 'does not apply' \u2014 never broader, never an error. ABSENT and EMPTY differ and the difference is load-bearing: omitting the field leaves the rule unscoped (applies to every client), whereas an empty array is a scope that names no client and therefore matches none. An authoring surface that deselects every client MUST write [] and MUST NOT omit the field, or it would silently grant universal autonomy. Entries MUST be strings; non-string entries are dropped rather than coerced."
+          }
         }
       }
     },
     "revoked": {
       "type": "array",
-      "description": "OPTIONAL — TOMBSTONES for rules the subject has REVOKED (§10.5). Multi-device sync reconciles guardrail sets by UNION (losing an explicit decision is never acceptable), and a union cannot express a deletion: removing a rule from `rules` on one device is undone by the other device's copy on the next sync, so the revocation silently fails. A tombstone records the removal itself. A consumer MUST drop any rule whose identity appears here, and a merge MUST union tombstones from BOTH sides — a revocation the other device has not yet seen must still take effect. Deliberately FAIL-CLOSED: a tombstoned identity stays revoked even if a rule bearing it reappears (e.g. from a restored backup), because a revoked `autoproceed` returning to life is the harmful direction and rule ids are unique-by-construction. Tombstones may be capped by COUNT but MUST NOT be pruned by age — a device that synced before the prune would resurrect the rule. Distinct from `expires_at`, which lapses an authorization on a schedule the subject set in advance; this records a decision taken after the fact.",
+      "description": "OPTIONAL \u2014 TOMBSTONES for rules the subject has REVOKED (\u00a710.5). Multi-device sync reconciles guardrail sets by UNION (losing an explicit decision is never acceptable), and a union cannot express a deletion: removing a rule from `rules` on one device is undone by the other device's copy on the next sync, so the revocation silently fails. A tombstone records the removal itself. A consumer MUST drop any rule whose identity appears here, and a merge MUST union tombstones from BOTH sides \u2014 a revocation the other device has not yet seen must still take effect. Deliberately FAIL-CLOSED: a tombstoned identity stays revoked even if a rule bearing it reappears (e.g. from a restored backup), because a revoked `autoproceed` returning to life is the harmful direction and rule ids are unique-by-construction. Tombstones may be capped by COUNT but MUST NOT be pruned by age \u2014 a device that synced before the prune would resurrect the rule. Distinct from `expires_at`, which lapses an authorization on a schedule the subject set in advance; this records a decision taken after the fact.",
       "items": {
         "type": "object",
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "properties": {
-          "id": { "type": "string", "description": "The revoked rule's identity — its `id`, or for a legacy id-less rule the same content-derived key the merge uses to dedupe it. Must be computed identically by every implementation or the tombstone will not match the rule it is meant to kill." },
-          "at": { "type": "string", "description": "OPTIONAL RFC 3339 instant of the revocation. Advisory: used to order tombstones when capping by count, never to expire one." }
+          "id": {
+            "type": "string",
+            "description": "The revoked rule's identity \u2014 its `id`, or for a legacy id-less rule the same content-derived key the merge uses to dedupe it. Must be computed identically by every implementation or the tombstone will not match the rule it is meant to kill."
+          },
+          "at": {
+            "type": "string",
+            "description": "OPTIONAL RFC 3339 instant of the revocation. Advisory: used to order tombstones when capping by count, never to expire one."
+          }
         }
       }
     }

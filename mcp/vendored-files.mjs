@@ -21,6 +21,8 @@
 
 /** Root-level modules vendored into mcp/vendor/. */
 export const ROOT_FILES = [
+  'authored-source.js',
+  'capabilities.js',
   'context-block.js',
   'protocol.js',
   'envelope.js',

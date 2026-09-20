@@ -457,24 +457,59 @@ console.log('\n§5 user-configuration canonical read (config home, part 2)');
   const auth = (id, effect) => ({ instruction_id: id, kind: 'authorization', match: { domains: ['legal'] }, effect });
   // Sibling present → its standing_instructions replace the fingerprint A-home
   // (dual-home lockstep — reading both would double every rule).
-  const both = { phaedo_fingerprint: { standing_rules: [auth('fp-rule', 'decline')] },
-                 phaedo_user_configuration: { standing_instructions: [auth('cfg-rule', 'escalate')] } };
+  // A REAL pair always carries fingerprint_id — §5.4 makes the pairing mandatory and
+  // deriveUserConfiguration refuses without it. The fixture used to omit it on both sides, so
+  // the pairing branch was unreachable and a mis-paired configuration would have sailed through.
+  const both = { phaedo_fingerprint: { fingerprint_id: 'fp-1', subject_id: 's-1', standing_rules: [auth('fp-rule', 'decline')] },
+                 phaedo_user_configuration: { configuration_id: 'c-1', fingerprint_id: 'fp-1', subject_id: 's-1', standing_instructions: [auth('cfg-rule', 'escalate')] } };
   const pols = loadPolicies(both);
   ok(pols.length === 1 && pols[0].id === 'cfg-rule' && pols[0].effect === 'escalate', 'config standing_instructions REPLACE the A-home (no doubling, config wins)');
+
+  // §5.4 on the AUTHORIZATION path. These entries become authorizations, so a configuration
+  // belonging to another identity — or to a fingerprint since replaced by a restore or a
+  // cross-device merge — would decide what this agent may do without asking. Reachable without
+  // any hostile actor: replace the fingerprint, leave the old configuration in the vault.
+  const misPaired = { phaedo_fingerprint: { fingerprint_id: 'fp-1', subject_id: 's-1', standing_rules: [auth('fp-rule', 'decline')] },
+                      phaedo_user_configuration: { configuration_id: 'c-1', fingerprint_id: 'fp-OTHER', subject_id: 's-1',
+                                                   standing_instructions: [auth('cfg-rule', 'escalate')] } };
+  const misIds = loadPolicies(misPaired).map(r => r.id);
+  ok(!misIds.includes('cfg-rule'),
+    'a configuration naming a DIFFERENT fingerprint does NOT supply authorizations (§5.4)');
+  ok(misIds.includes('fp-rule'),
+    '…and the A-home answers instead, so the subject keeps the guardrail rather than losing it');
+
+  const wrongSubject = { phaedo_fingerprint: { fingerprint_id: 'fp-1', subject_id: 's-1', standing_rules: [auth('fp-rule', 'decline')] },
+                         phaedo_user_configuration: { configuration_id: 'c-1', fingerprint_id: 'fp-1', subject_id: 's-OTHER',
+                                                      standing_instructions: [auth('cfg-rule', 'escalate')] } };
+  ok(!loadPolicies(wrongSubject).map(r => r.id).includes('cfg-rule'),
+    'a contradicting subject_id is rejected on the authorization path too');
   // Sibling present with EMPTY instructions → authored read is empty (canonical means canonical)
-  ok(loadPolicies({ phaedo_fingerprint: { standing_rules: [auth('fp-rule', 'decline')] },
-                    phaedo_user_configuration: { standing_instructions: [] } }).length === 0,
+  ok(loadPolicies({ phaedo_fingerprint: { fingerprint_id: 'fp-1', subject_id: 's-1', standing_rules: [auth('fp-rule', 'decline')] },
+                    phaedo_user_configuration: { configuration_id: 'c-1', fingerprint_id: 'fp-1', subject_id: 's-1', standing_instructions: [] } }).length === 0,
      'an empty canonical config yields no authored policies (A-home not consulted)');
+  // The distinction that matters, now that §5.4 can send a config to the fallback: an EMPTY
+  // config that GOVERNS means "no authored policies", while a config that does NOT govern means
+  // "no evidence" and the A-home answers. Same empty list, opposite meanings.
+  ok(loadPolicies({ phaedo_fingerprint: { fingerprint_id: 'fp-1', subject_id: 's-1', standing_rules: [auth('fp-rule', 'decline')] },
+                    phaedo_user_configuration: { configuration_id: 'c-1', fingerprint_id: 'fp-OTHER', subject_id: 's-1', standing_instructions: [] } })
+       .map(r => r.id).includes('fp-rule'),
+     'an empty config that does NOT govern is not a statement — the A-home still answers');
   // No sibling → the A-home still reads (back-compat until transport lands)
   ok(loadPolicies({ phaedo_fingerprint: { standing_rules: [auth('fp-rule', 'decline')] } })[0].id === 'fp-rule',
      'no sibling → A-home standing_rules still read');
   // Bound negative instructions read from the sibling too
-  const cfgBias = loadPolicies({ phaedo_user_configuration: { standing_instructions: [
-    { instruction_id: 'i1', kind: 'instruction', text: 'I confirm recurring costs.', decision: { dimension: 'evidence_threshold', polarity: 'negative', domain: 'finance' } },
-  ] } });
+  // Paired, because §5.4 requires a fingerprint to pair TO. A configuration with no fingerprint
+  // present is not a state that occurs: the cutover removes standing_rules from the fingerprint,
+  // not the fingerprint itself, so a profile always carries one.
+  const cfgBias = loadPolicies({
+    phaedo_fingerprint: { fingerprint_id: 'fp-1', subject_id: 's-1' },
+    phaedo_user_configuration: { configuration_id: 'c-1', fingerprint_id: 'fp-1', subject_id: 's-1', standing_instructions: [
+      { instruction_id: 'i1', kind: 'instruction', text: 'I confirm recurring costs.', decision: { dimension: 'evidence_threshold', polarity: 'negative', domain: 'finance' } },
+    ] } });
   ok(cfgBias.length === 1 && cfgBias[0].effect === 'bias_cautious', 'bound negative instruction projects a bias from the sibling');
   // Deprecated read paths are NOT displaced by the sibling
-  ok(loadPolicies({ phaedo_user_configuration: { standing_instructions: [] },
+  ok(loadPolicies({ phaedo_fingerprint: { fingerprint_id: 'fp-1', subject_id: 's-1' },
+                    phaedo_user_configuration: { configuration_id: 'c-1', fingerprint_id: 'fp-1', subject_id: 's-1', standing_instructions: [] },
                     phaedo_consult_policies: { version: '0.1', rules: [{ match: { domains: ['x'] }, effect: 'decline' }] } }).length === 1,
      'deprecated top-level consult_policies still read alongside a canonical config');
 }
@@ -590,9 +625,11 @@ console.log('\nrequire_binding (§10.5 binding gate)');
      'an AUTHORED require_binding autoproceed fires when bound');
 
   // Same for the §5 canonical config home.
-  const cfgAuthored = loadPolicies({ phaedo_user_configuration: { standing_instructions: [
-    { instruction_id: 'c1', kind: 'authorization', match: { domains: ['writing'] }, effect: 'autoproceed', require_binding: true, note: 'pre-approved' },
-  ] } });
+  const cfgAuthored = loadPolicies({
+    phaedo_fingerprint: { fingerprint_id: 'fp-1', subject_id: 's-1' },
+    phaedo_user_configuration: { configuration_id: 'c-1', fingerprint_id: 'fp-1', subject_id: 's-1', standing_instructions: [
+      { instruction_id: 'c1', kind: 'authorization', match: { domains: ['writing'] }, effect: 'autoproceed', require_binding: true, note: 'pre-approved' },
+    ] } });
   ok(cfgAuthored[0].requireBinding === true, 'require_binding survives the §5 config home too');
 }
 
@@ -639,6 +676,39 @@ console.log('\ncommitments (§5.7 decision state)');
 
   // And a fingerprint with no commitments behaves exactly as before.
   ok(loadPolicies({ phaedo_fingerprint: { standing_rules: [] } }, { now: NOW }).length === 0, 'no commitments → no change');
+}
+
+console.log('\nan UNSTATED magnitude satisfies no magnitude bound on a RELAXING rule (v0.1.68)');
+{
+  // The agent decides whether to state magnitude. It used to default to `medium` — on the wire and
+  // in the matcher — so a grant the subject capped at `medium` fired for an action whose stakes were
+  // never stated. `amount` already fails closed on omission; this makes magnitude do the same, for
+  // the rules that expand authority. Restrictive rules are unchanged, so no guardrail is lost.
+  const T0 = Date.parse('2026-09-14T12:00:00Z');
+  const m = (req, rules) => matchAuthorization(req, normalizePolicies(rules), { now: T0 });
+  const noMag = { type: 'action', domain: 'shopping', reversible: true, amount: 5, bound: true };
+  const capped   = [{ id: 'cap', effect: 'autoproceed', note: 'cap', match: { domains: ['shopping'], magnitude_max: 'high' } }];
+  const floored  = [{ id: 'flr', effect: 'autoproceed', note: 'flr', match: { domains: ['shopping'], magnitude_min: 'low' } }];
+  const uncapped = [{ id: 'any', effect: 'autoproceed', note: 'any', match: { domains: ['shopping'] } }];
+  const guard    = [{ id: 'esc', effect: 'escalate',    note: 'esc', match: { domains: ['shopping'], magnitude_min: 'medium' } }];
+
+  ok(m(noMag, capped) === null,
+    'a grant capped at `high` does NOT fire on a request with no magnitude — the cap ranked the '
+    + 'unknown as medium and let it through');
+  ok(m(noMag, floored) === null,
+    'nor does a grant with a magnitude FLOOR — neither bound is satisfied by an unstated value');
+  ok(m({ ...noMag, magnitude: 'medium' }, capped)?.signal === 'proceed',
+    'state the magnitude and the same grant fires — this is about omission, not about the cap');
+  ok(m(noMag, uncapped)?.signal === 'proceed',
+    'a grant with NO magnitude bound is untouched — only rules the subject qualified by magnitude change');
+  ok(m(noMag, guard)?.signal === 'escalate',
+    'a RESTRICTIVE rule still reads an unknown as medium, so a guardrail at `medium` keeps biting');
+
+  const { normalizeRequest } = await import('./consult-core.js');
+  const n = normalizeRequest({ consultation_type: 'action_approval', action_descriptor: { domain: 'shopping' } });
+  ok(n.magnitude === undefined,
+    'and the wire path no longer manufactures `medium` — the resolver can now tell "said medium" '
+    + 'from "said nothing", and the receipt records what was actually sent');
 }
 
 console.log(`\n✓ consult-policy: ${pass} checks passed`);

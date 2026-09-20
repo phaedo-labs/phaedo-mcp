@@ -30,8 +30,13 @@ injects, so MCP injection is byte-identical to web injection.
 
 The phases below track the **fingerprint source** (how the server obtains the
 fingerprint). The consultation, real-time escalation, act-as-me / delegation, and
-receipts-audit surfaces (the tools table above) shipped on top of these in the
-**0.2.x** line — see `CHANGELOG.md`.
+receipts-audit surfaces (the tools table above) shipped on top of these across the
+**0.2.x** line, and the §8.3 signing pair in **0.3.0** — see `CHANGELOG.md`.
+
+> **Install 0.3.0 or later.** 0.2.0, 0.2.1 and 0.2.2 were published with three
+> modules missing from the package, so they exit with `ERR_MODULE_NOT_FOUND`
+> instead of starting. 0.3.0 is the first working release since 0.1.1, and
+> `test-package-closure.mjs` now boots the packed tarball in CI.
 
 - **Phase 1a (this cut):** reads the fingerprint from a local JSON file (see
   *Fingerprint source*). Lets injection work in a real client today, no crypto.

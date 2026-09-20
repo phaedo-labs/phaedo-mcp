@@ -44,13 +44,20 @@ console.log('\nthe human-approval timeout is not the machine-reachability timeou
   // Anchor on the actual fetch call, not the header comment that also names the endpoint.
   const authorizeIdx = src.indexOf('endpoint}/v1/authorize');
   ok(authorizeIdx > -1, 'found the /v1/authorize fetch');
-  const authorizeBlock = src.slice(authorizeIdx, authorizeIdx + 700);
+  // Slice to the end of the fetch OPTIONS object rather than a fixed byte count. A fixed
+  // window silently stops covering the call the moment a comment is added inside it — which
+  // is exactly what happened when the agent's capability advertisement landed in this body.
+  const authorizeEnd = src.indexOf('});', authorizeIdx);
+  ok(authorizeEnd > authorizeIdx, 'found the end of the authorize fetch options');
+  const authorizeBlock = src.slice(authorizeIdx, authorizeEnd);
   ok(/AbortSignal\.timeout\(APPROVE_TIMEOUT_MS\)/.test(authorizeBlock),
     '/v1/authorize aborts on the HUMAN timeout, not the reachability one');
 
   const profileIdx = src.indexOf('endpoint}/v1/profile');
   ok(profileIdx > -1, 'found the /v1/profile fetch');
-  const profileBlock = src.slice(profileIdx, profileIdx + 700);
+  const profileEnd = src.indexOf('});', profileIdx);
+  ok(profileEnd > profileIdx, 'found the end of the profile fetch options');
+  const profileBlock = src.slice(profileIdx, profileEnd);
   ok(/AbortSignal\.timeout\(TIMEOUT_MS\)/.test(profileBlock),
     '/v1/profile still fails fast on the reachability timeout');
 }
@@ -112,11 +119,39 @@ console.log('\na cached read cannot answer "go ahead"');
   }
 }
 
-console.log('\nthe guard is actually wired into the authorization pre-flight');
+console.log('\nthe guard is wired into ALL THREE decision tools, not just the pre-flight');
 {
   const src = readFileSync(resolve(HERE, 'server.js'), 'utf8');
-  ok(/withStaleAuthorityGuard\(checkAuthorization\(/.test(src),
-    'phaedo_check_authorization routes its answer through the stale guard');
+  // It covered phaedo_check_authorization ALONE. The two tools an autonomous agent actually
+  // uses — consult and escalate — answered from a possibly-revoked cached profile with no
+  // downgrade and no provenance. escalate was worst: it reads the cache UNCONDITIONALLY and
+  // then tells the agent the signal is not blocking, i.e. proceed and never wake the subject.
+  //
+  // Asserted per HANDLER rather than by counting call sites, so a guard that moved to the wrong
+  // tool cannot satisfy it.
+  // Sliced by registerTool BOUNDARY, not a fixed character window — a window big enough for one
+  // handler is too small for the next, and one that guesses wrong reports a false failure (or,
+  // worse, a false pass by swallowing a neighbouring handler's guard).
+  const bounds = [...src.matchAll(/server\.registerTool\(\s*'([a-z_]+)'/g)]
+    .map((m) => ({ name: m[1], at: m.index }));
+  const handler = (name) => {
+    const i = bounds.findIndex((b) => b.name === name);
+    if (i === -1) return '';
+    return src.slice(bounds[i].at, i + 1 < bounds.length ? bounds[i + 1].at : src.length);
+  };
+  ok(bounds.length >= 8, `found ${bounds.length} registered tools to slice by`);
+  for (const tool of ['phaedo_check_authorization', 'phaedo_consult', 'phaedo_escalate']) {
+    ok(/withStaleAuthorityGuard\(/.test(handler(tool)),
+      `${tool} routes its answer through the stale guard`);
+  }
+
+  // And the pre-flight's RECEIPT is gated on the pre-guard result. The guard clears
+  // `authorization_matched`, so gating on the post-guard value meant the one case that most
+  // needs an audit trail — an authorization fired against a possibly-revoked cached grant and
+  // was withheld — left no record at all (§10.6).
+  ok(/const matchedPreGuard = preGuard\.authorization_matched === true;/.test(src)
+     && /if \(matchedPreGuard\) \{/.test(src),
+    'the §10.6 receipt is gated on the PRE-guard match, so a withheld authorization is still audited');
   ok(/const EXPANDING_SIGNALS = new Set\(\['proceed', 'autoproceed', 'bias_bold'\]\)/.test(src),
     'the expanding-signal set matches the one asserted above');
 }

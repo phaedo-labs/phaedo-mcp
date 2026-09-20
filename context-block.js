@@ -291,7 +291,9 @@ function extractValueSignals(fingerprint) {
   let hasValues = false, valueCount = 0, futureOriented = false, growthMinded = false;
   for (const layer of Object.values(fingerprint.layers || {})) {
     for (const { answer } of layer.responses || []) {
-      const t = (answer || '').trim();
+      // Coerced, not assumed. `answer` is not required by fingerprint.schema.json, so a legal
+      // fingerprint can carry any type here — `(answer || '')` still throws on a number or object.
+      const t = (typeof answer === 'string' ? answer : '').trim();
       if (!t) continue;
       if (/\b(what matters (most )?(to me|for me)|I believe in|at my core|my (core )?(principle|value|belief)|I care (deeply|strongly )?(about|for)|what I (value|stand for)|fundamentally I|it('s| is) important to me|I('m| am) committed to)\b/i.test(t)) {
         hasValues = true; valueCount++;
@@ -470,8 +472,19 @@ const INJECT_SOURCE_ALLOW = new Set([
 // and inject as extra bullets / pseudo-headings, derailing the block's structure.
 // Render-time chokepoint catches every writer (popup, conflict-review, mobile,
 // historical data already on disk) without chasing each call site.
+// The block's own closing tag. Anything that renders inside the block and reproduces this ends
+// the persona early as far as the model is concerned — everything after the forged tag reads as
+// outside it. Reached from summaries, interview answers, layer labels and rule text, all of which
+// carry attacker-influenceable content (see extraction/direct.js for the upstream chain).
+// Neutralised by breaking the tag, not by deleting the text: the subject's own words are never
+// silently removed from what the model is told about them.
+const BLOCK_TAG_RE = /<\/?\s*phaedo_user_profile\s*>/gi;
+function neutralizeBlockTag(s) {
+  return String(s == null ? '' : s).replace(BLOCK_TAG_RE, (m) => m.replace('<', '‹'));
+}
+
 function sanitizeRuleLine(s) {
-  return String(s == null ? '' : s).replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return neutralizeBlockTag(String(s == null ? '' : s)).replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 // §5.2 scope activation (v0.2 / OQ5) for domain/task-scoped rules. MIRRORS
 // user-config.js instructionActiveFor (this file is vendored standalone into
@@ -503,6 +516,45 @@ function scopePrefix(rule) {
   }
   return '';
 }
+// Which of two identical rules to keep. Mirrors sync-merge.js `richness` deliberately — the merge
+// prefers the copy carrying a structured decision value or an exception, and the injection seam
+// must not then discard the copy the merge chose to keep.
+function ruleRichness(r) {
+  return (r && r.decision && r.decision.value != null ? 2 : 0) + (r && r.exception ? 1 : 0);
+}
+
+// Does this rule NARROW what the agent may do? Only §5.2 `authorization` rules carry an `effect`,
+// and `autoproceed` / `bias_bold` are the two that EXPAND autonomy — the same split
+// mcp/consult-policy.js calls RELAXING. Anything without an effect is a plain instruction, and an
+// instruction is a constraint on behaviour, so it counts as restrictive. Erring that way is the
+// point: the budget should shed permissions, not prohibitions.
+const RELAXING_EFFECTS = new Set(['autoproceed', 'bias_bold']);
+function isRestrictiveRule(r) {
+  return !(r && typeof r.effect === 'string' && RELAXING_EFFECTS.has(r.effect));
+}
+
+/**
+ * How many authored rules the injection budget is currently dropping, and which.
+ *
+ * Exposed so the POPUP can tell the subject. The console warning inside renderOperatingRules is
+ * for a developer; the person whose rules are being silently withheld is not reading the service
+ * worker log. Computed by running the REAL selection — a second implementation that agreed today
+ * and drifted tomorrow would report a number the injected block does not honour, which is worse
+ * than saying nothing.
+ */
+function operatingRulesBudget(fingerprint, sessionContext) {
+  const before = _lastDropped;
+  _lastDropped = null;
+  try {
+    renderOperatingRules(fingerprint, sessionContext);
+    const dropped = _lastDropped || [];
+    return { dropped: dropped.length, texts: dropped.map(r => String(r.text || '').trim()) };
+  } finally {
+    _lastDropped = before;
+  }
+}
+let _lastDropped = null;
+
 function renderOperatingRules(fingerprint, sessionContext) {
   // Scope semantics (§5.2 v0.2): with session context, scoped rules filter
   // deterministically (fail-closed); without it, they inject with a conditional
@@ -512,11 +564,37 @@ function renderOperatingRules(fingerprint, sessionContext) {
   const hasDomainCtx = !!(ctx && typeof ctx.domain === 'string' && ctx.domain);
   const hasTaskCtx = !!(ctx && typeof ctx.task_hint === 'string' && ctx.task_hint);
   const rules = Array.isArray(fingerprint && fingerprint.standing_rules) ? fingerprint.standing_rules : [];
-  const seen = new Set();
-  const chosen = rules
+  let chosen = rules
     .filter(r => r && typeof r.text === 'string' && r.text.trim())
+    // LAPSED RULES ARE NOT INJECTED. §9 never read `expires_at`, while the §10.5 resolver
+    // enforces it — so the consult path correctly refused a grant the injection path was
+    // simultaneously telling the model the subject had endorsed. Same artifact, two answers,
+    // and the injected one presents it as a standing hard constraint.
+    //
+    // ABSENT and UNREADABLE differ, exactly as in mcp/consult-policy.js: absent means no expiry,
+    // present-but-unparseable means already lapsed. An unreadable bound must never read as an
+    // unbounded one.
+    .filter(r => {
+      if (r.expires_at === undefined || r.expires_at === null) return true;
+      if (typeof r.expires_at !== 'string') return false;
+      const t = Date.parse(r.expires_at);
+      return Number.isFinite(t) && Date.now() < t;
+    })
     .filter(r => {
       if (r.scope !== 'domain' && r.scope !== 'task') return true;
+      // A DEGENERATE scope — `scope:'domain'` with no usable `scope_domains` — is dropped, not
+      // rendered. Without this it survived the filter (no context => "keep, prefixed below") and
+      // then `scopePrefix` returned '' because the key list was empty, so a rule the subject
+      // scoped to something narrow rendered as an UNCONDITIONAL global constraint.
+      //
+      // The deterministic consumer already treats it as permanently inactive
+      // (user-config.js instructionActiveFor is fail-closed), so the two consumers disagreed
+      // completely about the same rule. spec/validate-fingerprint.mjs warns about exactly this
+      // — "or worse, a lenient consumer would apply it globally" — but the validator is a CI
+      // tool, not on the read path. Fail closed here too.
+      const keys = r.scope === 'domain' ? r.scope_domains : r.scope_tasks;
+      const usable = Array.isArray(keys) && keys.some((k) => typeof k === 'string' && k.trim());
+      if (!usable) return false;
       const canEvaluate = r.scope === 'domain' ? hasDomainCtx : hasTaskCtx;
       return canEvaluate ? scopeActive(r, ctx) : true;   // no context → keep, prefixed below
     })
@@ -535,10 +613,69 @@ function renderOperatingRules(fingerprint, sessionContext) {
       }
       return INJECT_SOURCE_ALLOW.has(r.source);                       // explicit allow-list
     })
-    // Dedup by normalized text — defensive against near-duplicate authored rules.
-    .filter(r => { const k = r.text.trim().toLowerCase().replace(/\s+/g, ' '); if (seen.has(k)) return false; seen.add(k); return true; })
-    .sort((a, b) => (Number.isFinite(a.priority) ? a.priority : 1e9) - (Number.isFinite(b.priority) ? b.priority : 1e9))
-    .slice(0, OPERATING_RULES_BUDGET);
+    // SORT BEFORE DEDUP. It used to run the other way, and dedup keeps the first entry it sees —
+    // so of two identical-text copies at different priorities, whichever the merge happened to
+    // put first survived. Keeping the weaker one then loses it to the budget below while the
+    // stronger one has already been discarded. Priority order first, so the copy that survives
+    // is the one the subject weighted highest, on every device.
+    .sort((a, b) => (Number.isFinite(a.priority) ? a.priority : 1e9) - (Number.isFinite(b.priority) ? b.priority : 1e9));
+
+  // Collapse identical rules — and collapse them the way sync-merge.js does, keeping the RICHER
+  // copy. Plain first-wins discarded an authored `exception`, so the block told the model the
+  // subject endorsed an UNQUALIFIED hard constraint they had actually qualified. Which copy won
+  // depended purely on array order, and §5.2 rules merge by UNION across devices, so that order
+  // is arbitrary — the same vault could render either version.
+  //
+  // The key includes the SCOPE, not just the text. An unscoped copy and a domain-scoped copy of
+  // the same sentence are different constraints, and collapsing them either widens a rule the
+  // subject narrowed (finding I4's failure, reintroduced through the back door) or narrows a
+  // global one. They stay separate lines.
+  //
+  // COUPLED TO sync-merge.js `richness`: the merge already prefers the copy with an exception or
+  // a structured decision value. This is the same choice at the injection seam, and
+  // scripts/test_injection_integrity.mjs asserts the two agree rather than trusting the comment.
+  const byKey = new Map();
+  for (const r of chosen) {
+    const scopeKey = r.scope === 'domain' ? `d:${(r.scope_domains || []).join(',')}`
+                   : r.scope === 'task'   ? `t:${(r.scope_tasks || []).join(',')}`
+                   : '';
+    const k = `${scopeKey}|${r.text.trim().toLowerCase().replace(/\s+/g, ' ')}`;
+    const prev = byKey.get(k);
+    // Strictly greater: the priority sort already put the stronger copy first, so an equal-richness
+    // later copy must not displace it.
+    if (!prev || ruleRichness(r) > ruleRichness(prev)) byKey.set(k, r);
+  }
+  chosen = [...byKey.values()];
+
+  // THE BUDGET DROPS GRANTS BEFORE PROHIBITIONS. Truncation is deliberate curation — rules must
+  // not crowd out the rest of the persona — but it was purely priority-ordered, and a rule with
+  // no `priority` sorts to 1e9 and goes first. That is the wrong fail direction: this codebase's
+  // rule is that missing grants fail safe and missing prohibitions do not. A dropped
+  // "auto-proceed on low-stakes X" costs a confirmation prompt; a dropped "never do X" costs X.
+  //
+  // Selection is re-ordered, RENDERING is not — the lines below stay in priority order, so a
+  // priority-90 prohibition does not get read as outranking a priority-1 instruction.
+  const overBudget = chosen.length - OPERATING_RULES_BUDGET;
+  let droppedRules = [];
+  if (overBudget > 0) {
+    const keep = new Set(chosen
+      .map((r, i) => ({ r, i, restrictive: isRestrictiveRule(r) }))
+      .sort((a, b) => (b.restrictive - a.restrictive) || (a.i - b.i))
+      .slice(0, OPERATING_RULES_BUDGET)
+      .map(e => e.r));
+    const dropped = chosen.filter(r => !keep.has(r));
+    droppedRules = dropped;
+    chosen = chosen.filter(r => keep.has(r));
+    // Not silent. The subject authored these and the block does not carry them; saying so in the
+    // block itself would tell the model it is missing constraints, which invites hedging on every
+    // answer — so it goes to the console instead. Surfacing it in the popup, where the subject can
+    // actually act on it, is tracked in docs/roadmap/next-steps.md.
+    _lastDropped = droppedRules;
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn(`[phaedo] ${dropped.length} authored rule(s) exceeded the ${OPERATING_RULES_BUDGET}-rule injection budget and were not injected:`,
+        dropped.map(r => r.text.trim().slice(0, 60)));
+    }
+  }
   if (!chosen.length) return [];
   const lines = [
     '\n## Operating rules (user-confirmed)',
@@ -639,9 +776,14 @@ function buildContextBlock(fingerprint, behavioralSignals = {}, linguisticProfil
     for (const [layerId, layer] of Object.entries(fingerprint.layers)) {
       // A layer may be extraction-only (added by Loop 2 reconcile) with no
       // questionnaire responses — guard before filtering.
-      const answered = (layer.responses || []).filter(r => r.answer.trim());
+      // `answer` is NOT required by fingerprint.schema.json, so a schema-LEGAL fingerprint could
+      // omit it — and `r.answer.trim()` then threw. The throw escapes rebuildContext inside an
+      // un-wrapped async chrome.storage callback in content.js, so the injection AND the capture
+      // wiring after it never ran: no persona at all, silently. buildLayerConfidence already
+      // type-guarded this exact field; this line did not.
+      const answered = (layer.responses || []).filter(r => typeof r?.answer === 'string' && r.answer.trim());
       if (!answered.length) continue;
-      lines.push(`\n### ${layer.label}`);
+      lines.push(`\n### ${neutralizeBlockTag(layer.label)}`);
       // A2 residual fix (2026-07-05): content-side softening of the
       // Domain-and-expertise section. The persona-eval §7.4 residual
       // showed the block front-loading a persona domain (e.g. immigration)
@@ -659,8 +801,11 @@ function buildContextBlock(fingerprint, behavioralSignals = {}, linguisticProfil
       if (layerId === 'domain_and_expertise') {
         lines.push('*Use as background context about who the subject is — do not steer general prompts toward these topics unless the prompt names them.*');
       }
+      // Neutralised, not stripped — an authored answer is the subject's own words. `answer` is
+      // free text the subject typed and `label`/`question` come from the questionnaire schema,
+      // but a restored or synced fingerprint can carry either from elsewhere.
       for (const { label, question, answer } of answered)
-        lines.push(`${label || question}: ${answer.trim()}`);
+        lines.push(`${neutralizeBlockTag(label || question)}: ${neutralizeBlockTag(answer.trim())}`);
       const layerSigs = behavioralSignals[layerId];
       if (layerSigs) {
         const observed = Object.entries(layerSigs)
@@ -687,7 +832,7 @@ function buildContextBlock(fingerprint, behavioralSignals = {}, linguisticProfil
     if (layer && typeof layer.summary === 'string' && layer.summary.trim()) {
       const clean = sanitizeSummary(layer.summary);            // P0 hygiene: drop episodic/opaque/dup lines
       if (clean) {
-        learnedLines.push(`\n### ${layer.label || layerId.replace(/_/g, ' ')}`);
+        learnedLines.push(`\n### ${neutralizeBlockTag(layer.label || layerId.replace(/_/g, ' '))}`);
         learnedLines.push(clean);
       }
     }
@@ -779,7 +924,13 @@ function validateVaultData(vd) {
 var SUMMARY_EPISODIC_RE = /(https?:\/\/|\bwww\.)|[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|\b[a-z0-9][a-z0-9-]*\.(com|org|net|io|so|co|ai|app|xyz|info)\b/i;
 var SUMMARY_DIM_RE = /^[-*\s]*([^:]{1,60}):\s*(.+)$/;
 var SUMMARY_OPAQUE_RE = /^[a-z]\d(?:[ _][a-z0-9]+)*$/i;
+// Summary lines carry EXTRACTION output — the most attacker-influenceable content in the block
+// (extraction/direct.js documents the chain). Tag-neutralised before any other hygiene runs.
 function sanitizeSummary(text) {
+  return _sanitizeSummaryInner(neutralizeBlockTag(text));
+}
+
+function _sanitizeSummaryInner(text) {
   const out = [];
   const seen = new Set();
   for (const raw of String(text).split('\n')) {
@@ -812,8 +963,20 @@ function renderContextBlock(vd, opts) {
   // artifact's standing_instructions REPLACE the A-home standing_rules for this
   // render. Inline mirror of user-config.js foldStandingInstructions (this file
   // is vendored standalone); parity locked by scripts/test_context_block.mjs.
+  //
+  // §5.4 is checked HERE too, not just at the drain: the configuration must name THIS
+  // fingerprint. Replace the fingerprint (a §8.2 restore, or a merge from another device) while
+  // an older configuration is still in the vault and its fingerprint_id names something gone —
+  // folding it anyway would put one identity's authored rules into another's context block, and
+  // the rendered output looks perfectly well-formed either way.
   const cfg = vd.phaedo_user_configuration;
-  if (cfg && typeof cfg === 'object' && Array.isArray(cfg.standing_instructions)) {
+  const cfgGoverns = cfg && typeof cfg === 'object' && fingerprint
+    && typeof fingerprint.fingerprint_id === 'string' && fingerprint.fingerprint_id
+    && cfg.fingerprint_id === fingerprint.fingerprint_id
+    && !(typeof fingerprint.subject_id === 'string' && fingerprint.subject_id
+         && typeof cfg.subject_id === 'string' && cfg.subject_id
+         && cfg.subject_id !== fingerprint.subject_id);
+  if (cfgGoverns && Array.isArray(cfg.standing_instructions)) {
     fingerprint = { ...fingerprint };
     if (cfg.standing_instructions.length) fingerprint.standing_rules = cfg.standing_instructions;
     else delete fingerprint.standing_rules;
@@ -836,6 +999,7 @@ globalThis.PhaedoContext = {
   synthesizeCognitiveProfile,
   synthesizeMentalModels,
   renderContextBlock,
+  operatingRulesBudget,
   validateVaultData,
   SIGNAL_LABELS,
 };

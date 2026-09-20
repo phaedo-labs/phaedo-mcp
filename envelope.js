@@ -54,19 +54,37 @@
       throw new Error('canonicalStringify: non-finite numbers are not expressible in RFC 8785 JSON')
     }
     if (value === null || typeof value !== 'object') {
-      const s = JSON.stringify(value)   // throws natively on BigInt
+      const s = JSON.stringify(typeof value === 'string' ? value.normalize('NFC') : value)
       if (s === undefined) throw new Error('canonicalStringify: a ' + typeof value + ' is not expressible in JSON')
       return s
     }
     if (Array.isArray(value)) {
       return '[' + value.map(v => notJson(v) ? 'null' : canonicalStringify(v)).join(',') + ']'
     }
-    const keys = Object.keys(value).sort()   // UTF-16 code-unit order (RFC 8785 §3.2.3)
-    const parts = []
-    for (const k of keys) {
+  // §6.2 NFC. "Implementations MUST normalize text to NFC before canonicalization to avoid
+  // signature breakage from equivalent but byte different strings." It was implemented NOWHERE.
+  //
+  // Not currently breaking §8.3, because signer and verifier work from the same bytes — but that
+  // holds only while nothing re-normalizes, and Apple platforms produce NFD routinely (HFS+/APFS
+  // filename APIs, some IME and paste paths). The failure it protects against is the worst kind:
+  // a signature that verified yesterday stops verifying today, with both sides holding text that
+  // compares equal to a human and to `===` after normalization, and nothing in the error saying
+  // why. Cheap now; archaeology later.
+  //
+  // KEYS TOO, not just values. Two objects whose keys differ only by normalization would
+  // otherwise canonicalize to different bytes AND could collide into one key after
+  // normalization — so the sort happens on the NORMALIZED keys, and a collision is rejected
+  // rather than silently dropping one of them.
+    const seen = new Map()
+    for (const k of Object.keys(value)) {
       if (notJson(value[k])) continue
-      parts.push(JSON.stringify(k) + ':' + canonicalStringify(value[k]))
+      const nk = k.normalize('NFC')
+      if (seen.has(nk)) throw new Error('canonicalStringify: keys collide under NFC: ' + JSON.stringify(k))
+      seen.set(nk, value[k])
     }
+    const keys = [...seen.keys()].sort()   // UTF-16 code-unit order (RFC 8785 §3.2.3), post-NFC
+    const parts = []
+    for (const k of keys) parts.push(JSON.stringify(k) + ':' + canonicalStringify(seen.get(k)))
     return '{' + parts.join(',') + '}'
   }
 

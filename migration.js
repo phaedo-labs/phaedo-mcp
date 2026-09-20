@@ -411,17 +411,50 @@
   // Idempotent: a fingerprint where every authored rule already sits below 50
   // returns the same reference. No `updated_at` bump (format cleanup, not user
   // edit — same convention as backfillSignalEvidenceBasis + sanitizeStoredSummaries).
-  function backfillAuthoredRulePriority(fp) {
-    if (!fp || typeof fp !== 'object' || !Array.isArray(fp.standing_rules)) return fp
+  // The repricing itself, over a bare list. Returns the SAME reference when nothing changed,
+  // so every caller keeps its idempotence shortcut.
+  function repriceAuthoredRules(list) {
+    if (!Array.isArray(list)) return list
     let changed = false
-    const rules = fp.standing_rules.map((r) => {
+    const out = list.map((r) => {
       if (!r || typeof r !== 'object') return r
       if (r.source !== 'interview') return r
       if (typeof r.priority !== 'number' || r.priority < 50) return r
       changed = true
       return { ...r, priority: 5 }
     })
-    return changed ? { ...fp, standing_rules: rules } : fp
+    return changed ? out : list
+  }
+
+  function backfillAuthoredRulePriority(fp) {
+    if (!fp || typeof fp !== 'object') return fp
+    const rules = repriceAuthoredRules(fp.standing_rules)
+    return rules === fp.standing_rules ? fp : { ...fp, standing_rules: rules }
+  }
+
+  /**
+   * The SAME backfill, applied to the §5 User Configuration — which is where authored rules
+   * actually live after the step-3 cutover (authored-source.js AUTHORED_HOME === 'config').
+   *
+   * Without this the backfill is a no-op for everything a reader sees. It repriced the A-home,
+   * which is now only a MIRROR, while the injection resolves through §5 and still saw priority
+   * 50. Those rules then sort below delta promotions (priority 10) and get squeezed out of
+   * context-block.js OPERATING_RULES_BUDGET (16) — which is the exact crowding-out PR #92 was
+   * written to prevent, silently reintroduced by the cutover. It also left the two homes
+   * disagreeing about the subject's own rules, which the cutover exists to make impossible.
+   *
+   * Applied unconditionally rather than behind AUTHORED_HOME: pre-cutover it is harmless (the
+   * write finalizer re-derives §5 from the A-home anyway) and it keeps the homes in lockstep in
+   * both positions. migration.js deliberately imports nothing, so it does not consult the switch.
+   *
+   * `updated_at` is NOT bumped, matching backfillAuthoredRulePriority and sanitizeStoredSummaries:
+   * this is format cleanup, not a user edit, and bumping it would make every device's migration
+   * look like an authored edit and fight last-write-wins sync.
+   */
+  function backfillConfigRulePriority(cfg) {
+    if (!cfg || typeof cfg !== 'object') return cfg
+    const rules = repriceAuthoredRules(cfg.standing_instructions)
+    return rules === cfg.standing_instructions ? cfg : { ...cfg, standing_instructions: rules }
   }
 
   // Backfill `evidence_basis` on any layer signal that lacks it (pre-fix
@@ -468,6 +501,14 @@
       cfp = backfillSignalEvidenceBasis(cfp); // §4.7 forward-detector backfill (idempotent)
       cfp = backfillAuthoredRulePriority(cfp); // PR #92 authored-leads-at-5 backfill (idempotent)
       if (cfp !== fp) out = { ...out, phaedo_fingerprint: cfp };
+    }
+    // The §5 sibling gets the same authored-rule backfill — post-cutover it is the home the
+    // injection actually reads, so repricing only the A-home mirror above changes nothing a
+    // reader sees. Idempotent and same-ref shortcut, like every other backfill here.
+    const cfg = vault.phaedo_user_configuration;
+    if (cfg) {
+      const ccfg = backfillConfigRulePriority(cfg);
+      if (ccfg !== cfg) out = { ...out, phaedo_user_configuration: ccfg };
     }
     const bs = vault.phaedo_behavioral_signals;
     if (bs && Object.keys(bs).some(k => LAYER_KEY_RENAMES[k])) {
@@ -521,6 +562,13 @@
       const repriced = backfillAuthoredRulePriority(curFp4);
       if (repriced !== curFp4) { out.phaedo_fingerprint = repriced; changed = true; }
     }
+    // …and on the §5 sibling, which is where those rules live post-cutover. Repricing only the
+    // A-home mirror leaves the injected copy at priority 50 and the two homes disagreeing.
+    const curCfg = out.phaedo_user_configuration;
+    if (curCfg) {
+      const repricedCfg = backfillConfigRulePriority(curCfg);
+      if (repricedCfg !== curCfg) { out.phaedo_user_configuration = repricedCfg; changed = true; }
+    }
     const bs = vaultPayload.phaedo_behavioral_signals;
     if (bs && Object.keys(bs).some(k => LAYER_KEY_RENAMES[k])) {
       out.phaedo_behavioral_signals = renameBehavioralSignals(bs);
@@ -544,6 +592,7 @@
     sanitizeStoredSummaries,
     backfillSignalEvidenceBasis,
     backfillAuthoredRulePriority,
+    backfillConfigRulePriority,
     canonicalizeVaultKeys,
     migrateVault,
   };

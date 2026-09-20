@@ -46,6 +46,13 @@ const LADDER = ['proceed', 'proceed_with_note', 'clarify', 'escalate']; // bold 
 // "Force" effects set the signal outright (the user's hard pre-decision) — these are
 // the authorizations. (bias_* effects are soft nudges, not authorizations.)
 const FORCE = { escalate: 'escalate', require_human: 'escalate', decline: 'decline', autoproceed: 'proceed' };
+// Membership must be an OWN-property test. `'constructor' in FORCE` is true via Object.prototype,
+// so `in` let a rule with effect:"constructor" past the malformed-rule filter and then yielded the
+// Object CONSTRUCTOR as its signal — which JSON.stringify drops, deleting `signal` (a REQUIRED
+// field) from the response entirely. An agent doing `if (resp.signal === 'escalate')` falls
+// through to its own default, so a malformed rule silently overrode a cautious inferred signal at
+// confidence 1.0. Same reason `toString`/`valueOf`/`hasOwnProperty` must not be members.
+const isForce = (e) => Object.hasOwn(FORCE, e);
 const FORCE_NOTES = {
   escalate: 'a standing rule surfaces this for a live decision',
   require_human: 'a standing rule requires human review here',
@@ -60,11 +67,45 @@ const FORCE_NOTES = {
 // omitting a field, or by running an unlisted client. Authority-narrowing only —
 // the same fail-safe direction as `expires_at`.
 const RELAXING = new Set(['autoproceed', 'bias_bold']);
+// How restrictive a FORCE effect is, by the signal it yields (v0.1.69). Used only to break a tie
+// between EQUALLY SPECIFIC force rules: the more restrictive one governs, so the outcome no longer
+// depends on array position when two restrictive rules of different strength collide. Strictly
+// greater replaces; equal keeps the earlier rule, so a full tie (same specificity, same effect)
+// still resolves by author order and the resolver stays deterministic.
+const STRICTNESS = { decline: 2, escalate: 1, proceed: 0 };
+const strictnessOf = (rule) => STRICTNESS[FORCE[rule.effect]] ?? 0;
 
 const magRank = (m) => MAG[String(m || '').toLowerCase()] ?? 1;
+/**
+ * A magnitude on a RULE BOUND, or null if it is not one of the three known values.
+ *
+ * `magRank` defaults an unknown value to 1 (medium). On a REQUEST that is the reading a RESTRICTIVE
+ * rule keeps (a stated-but-invalid value is rejected upstream by `normalizeRequest`; an UNSTATED
+ * one reaches here as undefined since v0.1.68 and is handled in `ruleMatches`: it satisfies no
+ * magnitude bound on a relaxing rule). On a rule bound it silently WIDENED a grant: `magnitude_max: "minimal"` from a
+ * typo or a non-reference producer produced a cap of medium, so an `autoproceed` covered
+ * medium-magnitude actions the subject never authorised. Unknown on a bound now yields null,
+ * which `boundsMatch` reads as "no bound expressed" for a cap — see the call site.
+ */
+const magBound = (m) => (Object.prototype.hasOwnProperty.call(MAG, String(m || '').toLowerCase())
+  ? MAG[String(m).toLowerCase()] : null);
 
 // Normalize a raw policy doc (array, or { rules: [...] }) → usable rules. Defensive:
 // silently skips malformed/unknown-effect rules. Never throws.
+/**
+ * `expires_at` → an epoch-ms deadline, or null for "no expiry".
+ *
+ * Fail-CLOSED on anything present that cannot be read as an RFC 3339 instant: the caller
+ * intended a bound, and the safe reading of an unintelligible bound is "already past", never
+ * "unbounded". Only a genuinely absent field means no expiry.
+ */
+function expiresAtOf(v) {
+  if (v === undefined || v === null) return null;          // absent → no expiry
+  if (typeof v !== 'string') return 0;                     // e.g. epoch-ms number → lapsed
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : 0;                       // unparseable → lapsed
+}
+
 export function normalizePolicies(raw) {
   const rules = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.rules) ? raw.rules : []);
   // §10.5 TOMBSTONES. The sync merge already drops revoked rules from `rules`, so this is a
@@ -81,7 +122,7 @@ export function normalizePolicies(raw) {
     if (!r || typeof r !== 'object') continue;
     if (r.id != null && revoked.has(String(r.id))) continue;   // revoked → never resolves
     const effect = String(r.effect || '').toLowerCase();
-    if (!(effect in FORCE) && effect !== 'bias_cautious' && effect !== 'bias_bold') continue;
+    if (!isForce(effect) && effect !== 'bias_cautious' && effect !== 'bias_bold') continue;
     const m = (r.match && typeof r.match === 'object') ? r.match : {};
     out.push({
       id: r.id || null,
@@ -90,11 +131,27 @@ export function normalizePolicies(raw) {
       // alias path in domainCovers — see the safety argument there. Precomputed so
       // matching stays allocation-free on the hot path.
       domainsCanonical: (Array.isArray(m.domains) ? m.domains : []).map((d) => canonicalDomain(d)).filter(Boolean),
-      magMin: m.magnitude_min != null ? magRank(m.magnitude_min) : null,
-      magMax: m.magnitude_max != null ? magRank(m.magnitude_max) : null,
+      // An UNRECOGNISED bound is dropped rather than defaulted. For magMax on a relaxing rule
+      // that is the fail-closed direction: `magMaxUnknown` below turns the whole rule inert
+      // rather than letting a typo widen it to medium.
+      magMin: m.magnitude_min != null ? magBound(m.magnitude_min) : null,
+      magMax: m.magnitude_max != null ? magBound(m.magnitude_max) : null,
+      // Remember that a cap was INTENDED but could not be read — an unreadable cap must not
+      // become an absent one on a grant.
+      magMaxUnknown: m.magnitude_max != null && magBound(m.magnitude_max) === null,
       reversible: typeof m.reversible === 'boolean' ? m.reversible : null,
       amountGt: typeof m.amount_gt === 'number' && isFinite(m.amount_gt) ? m.amount_gt : null,
       amountLt: typeof m.amount_lt === 'number' && isFinite(m.amount_lt) ? m.amount_lt : null,
+      // §10.5 `amount_lte` — an INCLUSIVE ceiling (M7). `amount_lt` is exclusive, and §10.7 set
+      // its ceiling to the SECOND-HIGHEST amount approved, so a subject who approved five $20
+      // purchases minted `amount_lt: 20` — a grant that could never fire for the very class that
+      // earned it. Exclusive is right for a FLOOR on a prohibition ("escalate above $1,000");
+      // inclusive is right for a CEILING on a grant ("auto-proceed up to $20"), which is what the
+      // evidence actually says.
+      //
+      // Both may be present. They are then both enforced, which is the more restrictive reading —
+      // a rule carrying two ceilings is ambiguous authoring, and ambiguity on a grant fails closed.
+      amountLte: typeof m.amount_lte === 'number' && isFinite(m.amount_lte) ? m.amount_lte : null,
       // Conditional + revocable authority (§10.5). `expiresAt` is ENFORCED: a lapsed
       // authorization stops firing (time-bound = revocable, no identity needed; the
       // direction is always authority-NARROWING, so it's fail-safe).
@@ -122,7 +179,14 @@ export function normalizePolicies(raw) {
       // client whose id is "42" — type confusion inventing principals that don't
       // exist. Non-strings are dropped, matching how every other field here is
       // type-checked rather than coerced.
-      expiresAt: typeof r.expires_at === 'string' && Number.isFinite(Date.parse(r.expires_at)) ? Date.parse(r.expires_at) : null,
+      // ABSENT and UNPARSEABLE are different, and conflating them failed OPEN. Absent means
+      // "no expiry"; a value that is present but does not parse used to become null, i.e. the
+      // grant became PERMANENT. A typo, or a producer writing epoch-ms instead of RFC 3339, was
+      // enough — and §10.5 calls expiry the fail-safe revocation mechanism. `ap2.js` computes a
+      // mandate expiry from these too, so an unparseable one there produced an Intent Mandate
+      // with `expires_at: null`: an UNBOUNDED payment credential presented to a merchant.
+      // Present-but-unparseable is now treated as ALREADY LAPSED (0), so ruleActive() is false.
+      expiresAt: expiresAtOf(r.expires_at),
       agents: Array.isArray(r.agents) ? r.agents.filter((a) => typeof a === 'string').map((a) => a.trim()).filter(Boolean) : null,
       // §10.2/§10.5 binding gate: when true, this rule only RELAXES for a request
       // bound to a concrete call (action_binding). Defaults FALSE so every existing
@@ -198,11 +262,31 @@ function biasesFromStandingRules(fp) {
 export function loadPolicies(vd, opts = {}) {
   let list = [];
   const cfg = vd?.phaedo_user_configuration;
-  const authoredHome = (cfg && typeof cfg === 'object' && Array.isArray(cfg.standing_instructions))
+  const fp = vd?.phaedo_fingerprint;
+  // §5.4 — the configuration must name THIS fingerprint. Higher stakes here than on any render
+  // path: these entries become AUTHORIZATIONS, so a configuration belonging to another identity
+  // (or to a fingerprint that has since been replaced by a restore or a cross-device merge)
+  // would decide what this agent may do without asking. Falls back to the A-home rather than
+  // throwing — a consult that cannot load policies must still be able to run the safe path.
+  const cfgGoverns = !!(cfg && typeof cfg === 'object' && fp && typeof fp === 'object'
+    && typeof fp.fingerprint_id === 'string' && fp.fingerprint_id
+    && cfg.fingerprint_id === fp.fingerprint_id
+    && !(typeof fp.subject_id === 'string' && fp.subject_id
+         && typeof cfg.subject_id === 'string' && cfg.subject_id
+         && cfg.subject_id !== fp.subject_id));
+  const authoredHome = (cfgGoverns && Array.isArray(cfg.standing_instructions))
     ? { standing_rules: cfg.standing_instructions }   // §5 canonical — same entry shape by construction
-    : vd?.phaedo_fingerprint;
-  try { list = list.concat(normalizePolicies(authorizationsFromStandingRules(authoredHome))); } catch { /* ignore */ }
-  try { list = list.concat(normalizePolicies(biasesFromStandingRules(authoredHome))); } catch { /* ignore */ }
+    : fp;
+  // §10.5 TOMBSTONES APPLY ACROSS BOTH HOMES. `authorizationsFromStandingRules` returns a bare
+  // array, so normalizePolicies saw an EMPTY tombstone set and a revoked grant stayed live —
+  // while `ap2.js` cross-applied the same tombstones correctly. One artifact, two answers, and
+  // the permissive one is the consult path, which is what actually authorizes the agent to act.
+  // The schema states dropping a tombstoned rule as a consumer MUST.
+  const revoked = Array.isArray(vd?.phaedo_fingerprint?.consult_policies?.revoked)
+    ? vd.phaedo_fingerprint.consult_policies.revoked : [];
+  const withTombstones = (rules) => ({ rules, revoked });
+  try { list = list.concat(normalizePolicies(withTombstones(authorizationsFromStandingRules(authoredHome)))); } catch { /* ignore */ }
+  try { list = list.concat(normalizePolicies(withTombstones(biasesFromStandingRules(authoredHome)))); } catch { /* ignore */ }
   // §5.7 decision STATE. Projected into the same rule shape so precedence, expiry
   // and the deterministic pre-flight all work unchanged. Ordered AFTER authorizations
   // deliberately: an authored gate is a durable policy, a commitment is a temporary
@@ -213,6 +297,14 @@ export function loadPolicies(vd, opts = {}) {
   try { list = list.concat(normalizePolicies(vd?.phaedo_consult_policies)); } catch { /* ignore */ }
   try { if (opts.policies) list = list.concat(normalizePolicies(opts.policies)); } catch { /* ignore */ }
   return list;
+}
+
+/** `key` appears in `d` delimited by a non-alphanumeric character (or a string edge). */
+function wordBoundaryMatch(d, key) {
+  if (!key) return false;
+  if (d === key) return true;
+  const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^a-z0-9])${esc}([^a-z0-9]|$)`).test(d);
 }
 
 // Does this rule's domain scope cover the action?
@@ -235,8 +327,21 @@ function domainCovers(rule, n) {
   if (!rule.domains.length) return true;
   const d = normalizeDomain(n.domain);
   if (!d) return false;
+  // A RELAXING rule matches on a WORD BOUNDARY, not a bare substring. Plain `includes` let
+  // `search` cover `research`, `ops` cover `devops` and `legal` cover `paralegal` — authority the
+  // subject never granted, from a coincidental letter overlap.
+  //
+  // NOT exact-or-dot-parent (escalation.js's rule): domains here are PHRASES, not dot-identifiers
+  // — a `draft` rule legitimately covers a `draft email` action, and the shipped suite pins that.
+  // A boundary keeps both real cases (`draft email`, `finance.crypto_trading`) and drops every
+  // coincidental one.
+  //
+  // Restrictive effects keep the broader substring reach on purpose: for a prohibition,
+  // over-matching is the SAFE direction.
+  if (RELAXING.has(rule.effect)) {
+    return rule.domains.some((k) => wordBoundaryMatch(d, k));
+  }
   if (rule.domains.some((k) => d.includes(k))) return true;
-  if (RELAXING.has(rule.effect)) return false;          // grants never get the alias path
   // Compare canonical to canonical. An early draft guarded this with `c !== d`, on the
   // assumption that canonicalization only ever moves the ACTION — but the alias is just
   // as often on the RULE ("financial" rule, "finance" action), and that guard silently
@@ -247,9 +352,27 @@ function domainCovers(rule, n) {
 
 function ruleMatches(rule, n) {
   if (!domainCovers(rule, n)) return false;
+  // AN UNSTATED MAGNITUDE SATISFIES NO MAGNITUDE BOUND ON A RELAXING RULE (v0.1.68). It used to be
+  // ranked `medium` — here and, before 2026-09-14, on the wire in normalizeRequest — so a grant the
+  // subject capped at `magnitude_max: medium` fired for an action whose stakes the agent simply
+  // never stated. That is the `amount` rule's mirror image done wrong: an unpriced action satisfies
+  // no priced ceiling, and the agent is the party who decides whether to state either field — the
+  // fifth instance of "the party being gated authors the field" (v0.1.48, .53, .56, .66). Now a
+  // grant qualified by magnitude does not fire on a request that carries none, exactly as one
+  // qualified by amount does not. Restrictive rules keep the `medium` reading: a prohibition should
+  // not stop biting because the agent left a field out, and `medium` is the same middle it always
+  // was for them (a floor at `high` still does not fire on an unknown, as an `amount_gt` floor does
+  // not fire on an unpriced action — "cannot assert it is over the bar").
+  const magUnknown = magBound(n.magnitude) === null;
+  if (magUnknown && RELAXING.has(rule.effect) && (rule.magMin != null || rule.magMax != null || rule.magMaxUnknown)) return false;
   const mag = magRank(n.magnitude);
   if (rule.magMin != null && mag < rule.magMin) return false;
   if (rule.magMax != null && mag > rule.magMax) return false;
+  // A cap the subject wrote but we cannot read makes a RELAXING rule inert. Absent means "no
+  // cap"; unreadable means "they meant a cap", and the safe reading of an unintelligible cap on
+  // a grant is that it does not apply. Restrictive effects are unaffected — a prohibition with
+  // a broken bound should still bite.
+  if (rule.magMaxUnknown && RELAXING.has(rule.effect)) return false;
   if (rule.reversible != null && n.reversible !== rule.reversible) return false;
   // Numeric FLOOR (e.g. "over $5,000"): a rule with amount_gt only matches when
   // the action carries a numeric amount strictly above it. No amount on the action →
@@ -260,6 +383,9 @@ function ruleMatches(rule, n) {
   // a ceiling nobody can check. Both gates fail closed when the amount is absent, which
   // means adding an amount bound can only ever narrow a rule, never widen it.
   if (rule.amountLt != null && !(typeof n.amount === 'number' && n.amount < rule.amountLt)) return false;
+  // Inclusive ceiling (M7). Like `amountLt`, an unpriced request does NOT satisfy a priced bound:
+  // a rule the subject qualified by money must not fire on a request that carries no amount.
+  if (rule.amountLte != null && !(typeof n.amount === 'number' && n.amount <= rule.amountLte)) return false;
   return true;
 }
 
@@ -331,11 +457,73 @@ export function bindingSuppressed(n, policies, { now = Date.now(), clientId = nu
     && ruleMatches(r, n) && !bindingSatisfied(r, n));
 }
 
+
+// ── §10.5 precedence: SPECIFICITY, then restrictive, then author order (M3) ──────────────────
+//
+// It used to be FIRST MATCH, full stop, and that was the one §10.5 ordering that resolved in the
+// WIDENING direction: a blanket `autoproceed` authored in January pre-empted an `escalate above
+// $1,000` authored in June, purely because it came first in the array. Every other asymmetry in
+// this file — expiry, `require_binding`, `agents` on relaxing effects, an unreadable
+// `magnitude_max` — narrows authority when something is unclear. This one granted it.
+//
+// THE NAIVE FIX IS WRONG, and the shipped suite proved it before this one shipped. "Restrictive
+// always wins" makes an agent-scoped grant inert the moment any general prohibition exists — and
+// an agent-scoped grant IS a targeted exemption, the subject naming one client they trust with
+// something. Class-based precedence deletes the ability to express an exception at all.
+//
+// So: the MORE SPECIFIC rule wins, and specificity is the number of dimensions on which the
+// subject narrowed the rule's applicability. A rule that names a domain, a price ceiling and a
+// client said more about when it should apply than a blanket one, and the more considered
+// statement should govern — which is how policy resolution works everywhere it is done well
+// (longest-prefix routing, CSS, IAM).
+//
+// TIES GO TO THE RESTRICTIVE EFFECT. Two rules that narrowed on the same number of dimensions are
+// equally considered, and at that point the fail-safe direction decides — a missing grant costs a
+// question, a missing prohibition costs the action. Only when both are equally specific AND the
+// same class does author order break the tie, which keeps the result deterministic.
+//
+// COUNTED, not weighted. A weighting would need a defensible ordering between "named a domain"
+// and "named a price", and there isn't one — any ranking would encode a preference the subject
+// never expressed. Counting says only what is true: this rule is qualified in more ways.
+function specificity(rule) {
+  let n = 0;
+  if (Array.isArray(rule.domains) && rule.domains.length) n++;   // named a domain
+  if (Array.isArray(rule.agents)) n++;                           // scoped to named clients ([] counts: it IS a scope)
+  if (rule.amountGt != null) n++;                                // a floor
+  if (rule.amountLt != null || rule.amountLte != null) n++;      // a ceiling, either form
+  if (rule.magMin != null) n++;
+  if (rule.magMax != null || rule.magMaxUnknown) n++;            // an intended cap counts even if unreadable
+  if (rule.reversible != null) n++;
+  if (rule.requireBinding) n++;                                  // only relaxes for a bound request
+  if (rule.expiresAt != null) n++;                               // time-bounded
+  return n;
+}
+
+/** The governing force rule among those that already matched, or null. */
+function mostSpecificForce(matched) {
+  let best = null;
+  let bestScore = -1;
+  for (const r of matched) {
+    if (!isForce(r.effect)) continue;
+    const score = specificity(r);
+    if (best === null || score > bestScore) { best = r; bestScore = score; continue; }
+    // Equal specificity: the MORE RESTRICTIVE effect outranks (decline > escalate > autoproceed).
+    // This used to be a two-class test (restrictive beats relaxing), which left escalate-vs-decline
+    // at equal specificity to ARRAY ORDER — and a sync merge reorders arrays, so which of two
+    // restrictive rules governed could flip between devices (audit M3, 2026-09-13). Strictly greater
+    // replaces; equal keeps the EARLIER rule, so a full tie stays deterministic by author order.
+    if (score === bestScore && strictnessOf(r) > strictnessOf(best)) {
+      best = r;
+    }
+  }
+  return best;
+}
+
 export function matchAuthorization(n, policies, { now = Date.now(), clientId = null } = {}) {
   if (!policies || !policies.length || n.type === 'voice_draft') return null;
   const matched = policies.filter((r) => ruleActive(r, now) && agentScopeSatisfied(r, clientId)
     && ruleMatches(r, n) && bindingSatisfied(r, n));
-  const force = matched.find((r) => r.effect in FORCE);
+  const force = mostSpecificForce(matched);
   if (!force) return null;
   return { rule: force, signal: FORCE[force.effect], note: force.note || FORCE_NOTES[force.effect] };
 }

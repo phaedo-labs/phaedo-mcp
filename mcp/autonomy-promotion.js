@@ -133,7 +133,10 @@ function proposedText(domain, magMax, ceiling = null) {
   const scope = magMax === 'low' ? 'small, reversible' : 'routine, reversible';
   // The ceiling is the single most consequential term on a money rule, so it belongs
   // in the sentence the subject reads — not only in the terms line beneath it.
-  const under = ceiling !== null ? ` under ${ceiling}` : '';
+  // "up to", not "under" — the ceiling is INCLUSIVE now (M7), and this sentence is what the
+  // subject reads before endorsing. Prose that says "under 20" for a rule that fires AT 20
+  // misdescribes the authority being granted, on the one screen where accuracy is consent.
+  const under = ceiling !== null ? ` up to ${ceiling}` : '';
   return `Let agents go ahead with ${scope} ${domain} actions${under} without asking me first.`;
 }
 
@@ -239,7 +242,12 @@ export function buildAutonomyPromotions(receipts, fp, opts = {}) {
         domains: [domain],
         reversible: true,
         magnitude_max: magMax,
-        ...(ceiling !== null ? { amount_lt: ceiling } : {}),
+        // INCLUSIVE (M7). This staged `amount_lt: ceiling`, and `ceiling` is the SECOND-HIGHEST
+        // amount approved — so five $20 approvals minted a rule matching `amount < 20`, which
+        // excludes every purchase that earned it. The grant was unfireable by construction, and
+        // silently: it appeared in the subject's rules, read correctly in prose, and never
+        // matched. §10.5 gained `amount_lte` for this.
+        ...(ceiling !== null ? { amount_lte: ceiling } : {}),
       },
       effect: 'autoproceed',
       // Non-negotiable on a PROPOSED relaxation: it may only apply to a request

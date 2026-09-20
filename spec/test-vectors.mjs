@@ -57,6 +57,18 @@ console.log('\nTC-CANON — canonical serialization (§6)');
     ok(`${v.test_id}: canonical bytes match`, got === v.expected_canonical);
     ok(`${v.test_id}: sha256 matches`, sha256hex(got) === v.expected_sha256);
   }
+
+  // §6.2's requirement stated as a RELATION, not just as two independently-recorded outputs.
+  // 0015 feeds decomposed (NFD) text and 0016 the same text already in NFC; the whole point is
+  // that they produce identical bytes. Asserting the pair directly means a future regeneration
+  // of this file cannot quietly mint two agreeing-but-wrong expectations, and it says WHY those
+  // two vectors exist to anyone reading the runner.
+  const byId = Object.fromEntries(vectors.map(v => [v.test_id, v]));
+  const nfd = byId['T-PHAEDO-CANON-0015'], nfc = byId['T-PHAEDO-CANON-0016'];
+  ok('§6.2: NFD and NFC inputs canonicalize to the SAME bytes',
+    !!nfd && !!nfc && canonicalStringify(nfd.input) === canonicalStringify(nfc.input));
+  ok('§6.2: and the two inputs really were different to begin with',
+    !!nfd && !!nfc && JSON.stringify(nfd.input) !== JSON.stringify(nfc.input));
 }
 
 // ── TC-FP-CONFORMANCE ───────────────────────────────────────────────────────

@@ -13,6 +13,7 @@ import { resolve } from 'path';
 import { hasPairingRecord, loadPairingRecord, loadFingerprintFromPhone, PhoneError } from './phone-source.js';
 import { defaultStateDir, writeCache, readCache, clearCache } from './cache.js';
 import { foldLocalCapture, isLocalCaptureOwner } from './capture-local.js';
+import { Capabilities, AuthoredSource } from './lib/phaedo-crypto.js';
 
 // §4.1 protocol-identity normalization (consumer defense-in-depth, 2026-06-16).
 // A stored fingerprint from a producer that predates identity stamping (or whose
@@ -37,6 +38,39 @@ function normalizeIdentity(vd) {
   if (fp.subject_id === undefined && typeof fp.fingerprint_id === 'string' && fp.fingerprint_id) patch.subject_id = fp.fingerprint_id;
   if (!Object.keys(patch).length) return vd;
   return { ...vd, phaedo_fingerprint: { ...fp, ...patch } };
+}
+
+
+// §5 CANONICAL ON READ — the step-3 read path, applied ONCE at the boundary.
+//
+// The agent's authored-content readers (ap2.js buildIntentMandatePayload, autonomy-promotion.js,
+// consult-core.js delegation authoring) all take a FINGERPRINT, not a vault. Threading the §5
+// configuration through every one of them would mean changing four signatures and every caller,
+// and would leave four places that must each remember to check §5.4.
+//
+// Folding here instead makes every downstream reader correct by construction, and means step 3
+// (deleting fp.standing_rules) changes nothing about what any of them see. One fold, one §5.4
+// check, one place to be wrong.
+//
+// §5.4 matters more on this path than anywhere else: these entries become AUTHORIZATIONS — what
+// the agent may do without asking — so a configuration belonging to another identity, or to a
+// fingerprint since replaced by a restore or a cross-device merge, must not govern. Falls back
+// to the A-home rather than throwing; an agent that cannot resolve policy must still run the
+// safe path.
+export function foldConfigHome(vd) {
+  if (!vd || typeof vd !== 'object') return vd;
+  const fp = vd.phaedo_fingerprint;
+  const cfg = vd.phaedo_user_configuration;
+  if (!fp || typeof fp !== 'object' || !cfg || typeof cfg !== 'object') return vd;
+  if (!Capabilities || !AuthoredSource) return vd;          // vendored module missing → leave as-is
+  if (!AuthoredSource.configGoverns(cfg, fp)) return vd;    // §5.4 — not this subject's
+  if (!Array.isArray(cfg.standing_instructions)) return vd; // not a statement about rules
+  const next = { ...fp };
+  // An EMPTY standing_instructions is a statement ("no rules"), not an absence — leaving the
+  // A-home in place there would resurrect rules the subject deleted (#247's lesson).
+  if (cfg.standing_instructions.length) next.standing_rules = cfg.standing_instructions;
+  else delete next.standing_rules;
+  return { ...vd, phaedo_fingerprint: next };
 }
 
 // Resolution order for the local fixture (1a):
@@ -99,7 +133,7 @@ export async function loadFingerprint(baseDir) {
     try {
       const vd = await loadFingerprintFromPhone(rec);
       await writeCache(stateDir, vd);
-      return normalizeIdentity(vd);
+      return foldConfigHome(normalizeIdentity(vd));
     } catch (err) {
       // A 4xx means the phone REACHED us and rejected this client (revoked /
       // invalid credentials / failed handshake). Revocation must be effective:
@@ -111,7 +145,7 @@ export async function loadFingerprint(baseDir) {
         throw err;
       }
       const cached = await readCache(stateDir);
-      if (cached) return stamp(normalizeIdentity(cached.vault), cached); // phone unreachable → encrypted cache (may be stale)
+      if (cached) return stamp(foldConfigHome(normalizeIdentity(cached.vault)), cached); // phone unreachable → encrypted cache (may be stale)
       throw err;                        // no phone + no cache → cannot serve
     }
   }
@@ -136,9 +170,9 @@ export async function loadFingerprint(baseDir) {
   // branch, and an explicit PHAEDO_FINGERPRINT ("use THIS file") stays verbatim —
   // it is the hermetic-test escape hatch.
   if (!process.env.PHAEDO_FINGERPRINT && await isLocalCaptureOwner(hasPairingRecord(baseDir))) {
-    return normalizeIdentity(await foldLocalCapture(vd));
+    return foldConfigHome(normalizeIdentity(await foldLocalCapture(vd)));
   }
-  return normalizeIdentity(vd);
+  return foldConfigHome(normalizeIdentity(vd));
 }
 
 // Like loadFingerprint, but PREFERS the at-rest encrypted cache over a live phone pull.
@@ -169,7 +203,7 @@ export async function loadFingerprint(baseDir) {
 export async function loadFingerprintPreferCache(baseDir) {
   if (!process.env.PHAEDO_FINGERPRINT && hasPairingRecord(baseDir)) {
     const cached = await readCache(defaultStateDir());
-    if (cached) return stamp(normalizeIdentity(cached.vault), cached);
+    if (cached) return stamp(foldConfigHome(normalizeIdentity(cached.vault)), cached);
   }
   return loadFingerprint(baseDir);
 }

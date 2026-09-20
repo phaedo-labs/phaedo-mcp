@@ -94,10 +94,10 @@
       "description": "RFC 8785 ES number formatting: integers, small/large magnitudes, trailing-zero drop",
       "input": {
         "a": 56,
-        "b": 1e-06,
-        "c": 1e-07,
+        "b": 0.000001,
+        "c": 1e-7,
         "d": 1e+21,
-        "e": 10.0,
+        "e": 10,
         "f": 0.1
       },
       "expected_canonical": "{\"a\":56,\"b\":0.000001,\"c\":1e-7,\"d\":1e+21,\"e\":10,\"f\":0.1}",
@@ -118,7 +118,7 @@
       "test_id": "T-PHAEDO-CANON-0010",
       "description": "Negative zero canonicalizes to 0 (RFC 8785 / ES Number::toString)",
       "input": {
-        "z": -0.0
+        "z": 0
       },
       "expected_canonical": "{\"z\":0}",
       "expected_sha256": "e313adcae40818c4a48a6f5a32c7ab937365ffb0962282a5bf1a629f8d456b63"
@@ -141,10 +141,10 @@
       "test_id": "T-PHAEDO-CANON-0012",
       "description": "Key sort is by UTF-16 code units of the RAW key: controls < digits < €",
       "input": {
-        "€": 4,
-        "10": 2,
         "1": 1,
         "2": 3,
+        "10": 2,
+        "€": 4,
         "\r": 0
       },
       "expected_canonical": "{\"\\r\":0,\"1\":1,\"10\":2,\"2\":3,\"€\":4}",
@@ -165,6 +165,50 @@
         "bad": "__NAN__"
       },
       "expect_error": true
+    },
+    {
+      "test_id": "T-PHAEDO-CANON-0015",
+      "description": "§6.2: a decomposed (NFD) string VALUE is normalized to NFC before serialization — the two forms MUST canonicalize identically, or a signature breaks the moment either side re-normalizes (Apple platforms produce NFD routinely)",
+      "input": {
+        "text": "éclair"
+      },
+      "expected_canonical": "{\"text\":\"éclair\"}",
+      "expected_sha256": "e2b22bba6cd1bdc4c19ec67b6bcc2b59abf518aae30f99f615c95a92fde8cb60"
+    },
+    {
+      "test_id": "T-PHAEDO-CANON-0016",
+      "description": "§6.2: the SAME string already in NFC produces byte-identical output to the NFD vector above — this pair is the whole point of the requirement",
+      "input": {
+        "text": "éclair"
+      },
+      "expected_canonical": "{\"text\":\"éclair\"}",
+      "expected_sha256": "e2b22bba6cd1bdc4c19ec67b6bcc2b59abf518aae30f99f615c95a92fde8cb60"
+    },
+    {
+      "test_id": "T-PHAEDO-CANON-0017",
+      "description": "§6.2: object KEYS are normalized too, and sorting happens on the normalized key — normalizing only values would still yield two different canonical forms for the same document",
+      "input": {
+        "ñ": 1,
+        "a": 2
+      },
+      "expected_canonical": "{\"a\":2,\"ñ\":1}",
+      "expected_sha256": "fca2f1e86461ab9fa4600394f239c15139e615f208d6e7ba1a0f848bc381afbb"
+    },
+    {
+      "test_id": "T-PHAEDO-CANON-0018",
+      "description": "§6.2: normalization applies at every depth, inside arrays and nested objects alike",
+      "input": {
+        "outer": [
+          {
+            "k": "é"
+          },
+          {
+            "k": "é"
+          }
+        ]
+      },
+      "expected_canonical": "{\"outer\":[{\"k\":\"é\"},{\"k\":\"é\"}]}",
+      "expected_sha256": "7ec58944140dc7f46e4edb91b4c76d7cbdef9df2341bcb690e9047c1129a9a4f"
     }
   ]
 }

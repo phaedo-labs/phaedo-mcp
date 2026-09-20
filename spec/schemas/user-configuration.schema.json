@@ -2,13 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://getphaedo.com/spec/user-configuration.schema.json",
   "title": "Phaedo User Configuration",
-  "description": "The §5 User Configuration artifact — the subject-AUTHORED sibling of the fingerprint (Phaedo Protocol v0.1 §5). Authored content: stated once, no producer confidence score, applied VERBATIM, never inferred (§5.6 — inferred edits are forbidden). This schema is the CANONICAL home of the §5.2 standing-instruction shape ($defs/standing_instruction); fingerprint.schema.json's standing_rules[] (the v0.1 A-home, Proposal 0007) $refs it, so the two homes cannot drift during the v0.2 migration. The wrapper key phaedo_user_configuration is the vault/payload key, mirroring phaedo_fingerprint; the inner object is the §5.1 document. Paired to exactly one fingerprint via fingerprint_id (§5.4) — a configuration without a paired fingerprint is invalid. Rides the same envelope (§7) with artifact_kind 'user_configuration' and the distinct key-derivation context phaedo:config:enc (§5.5). Producer↔schema tie: spec/test-schemas.mjs; validator: spec/validate-fingerprint.mjs validateUserConfiguration; derivation from the A-home: user-config.js.",
+  "description": "The \u00a75 User Configuration artifact \u2014 the subject-AUTHORED sibling of the fingerprint (Phaedo Protocol v0.1 \u00a75). Authored content: stated once, no producer confidence score, applied VERBATIM, never inferred (\u00a75.6 \u2014 inferred edits are forbidden). This schema is the CANONICAL home of the \u00a75.2 standing-instruction shape ($defs/standing_instruction); fingerprint.schema.json's standing_rules[] (the v0.1 A-home, Proposal 0007) $refs it, so the two homes cannot drift during the v0.2 migration. The wrapper key phaedo_user_configuration is the vault/payload key, mirroring phaedo_fingerprint; the inner object is the \u00a75.1 document. Paired to exactly one fingerprint via fingerprint_id (\u00a75.4) \u2014 a configuration without a paired fingerprint is invalid. Rides the same envelope (\u00a77) with artifact_kind 'user_configuration' and the distinct key-derivation context phaedo:config:enc (\u00a75.5). Producer\u2194schema tie: spec/test-schemas.mjs; validator: spec/validate-fingerprint.mjs validateUserConfiguration; derivation from the A-home: user-config.js.",
   "type": "object",
-  "required": ["phaedo_user_configuration"],
+  "required": [
+    "phaedo_user_configuration"
+  ],
   "properties": {
     "phaedo_user_configuration": {
       "type": "object",
-      "description": "The §5.1 user-configuration document.",
+      "description": "The \u00a75.1 user-configuration document.",
       "required": [
         "phaedo_protocol_version",
         "configuration_id",
@@ -36,7 +38,7 @@
         },
         "fingerprint_id": {
           "type": "string",
-          "description": "The fingerprint this configuration is paired with (§5.4). Required — a configuration without a paired fingerprint is invalid in v0.1."
+          "description": "The fingerprint this configuration is paired with (\u00a75.4). Required \u2014 a configuration without a paired fingerprint is invalid in v0.1."
         },
         "created_at": {
           "type": "string",
@@ -53,31 +55,86 @@
         },
         "standing_instructions": {
           "type": "array",
-          "description": "Ordered list of standing instructions (§5.2) — the migrated home of the fingerprint A-home standing_rules. Same entry shape (kind discriminator + optional decision binding, Proposal 0007); injected verbatim in priority order, before fingerprint material (§5.4).",
-          "items": { "$ref": "#/$defs/standing_instruction" }
+          "description": "Ordered list of standing instructions (\u00a75.2) \u2014 the migrated home of the fingerprint A-home standing_rules. Same entry shape (kind discriminator + optional decision binding, Proposal 0007); injected verbatim in priority order, before fingerprint material (\u00a75.4).",
+          "items": {
+            "$ref": "#/$defs/standing_instruction"
+          }
         },
         "example_corpus": {
           "type": "array",
-          "description": "Reference outputs the subject marked exemplary (§5.3). Soft cap 20 examples (SHOULD, not enforced here). Consumers SHOULD treat as a retrieval source, not a verbatim dump. Example content is authored CONTENT by definition — the §4.6 episodic rail does not apply to it.",
+          "description": "Reference outputs the subject marked exemplary (\u00a75.3). Soft cap 20 examples (SHOULD, not enforced here). Consumers SHOULD treat as a retrieval source, not a verbatim dump. Example content is authored CONTENT by definition \u2014 the \u00a74.6 episodic rail does not apply to it.",
           "items": {
             "type": "object",
-            "required": ["example_id", "kind", "label", "content", "created_at"],
+            "required": [
+              "example_id",
+              "kind",
+              "label",
+              "content",
+              "created_at"
+            ],
             "properties": {
-              "example_id": { "type": "string", "description": "Stable identifier (UUID v4)." },
-              "kind": {
-                "enum": ["writing_sample", "decision_record", "code_sample", "other"],
-                "description": "§5.3 example kind."
+              "example_id": {
+                "type": "string",
+                "description": "Stable identifier (UUID v4)."
               },
-              "label": { "type": "string", "description": "Short description for indexing and display." },
-              "content": { "type": "string", "maxLength": 8000, "description": "The sample. UTF-8. v0.1 limit: 8000 characters." },
-              "tags": { "type": "array", "items": { "type": "string" }, "description": "Producer- or user-assigned tags for retrieval." },
-              "created_at": { "type": "string", "description": "RFC 3339." }
+              "kind": {
+                "enum": [
+                  "writing_sample",
+                  "decision_record",
+                  "code_sample",
+                  "other"
+                ],
+                "description": "\u00a75.3 example kind."
+              },
+              "label": {
+                "type": "string",
+                "description": "Short description for indexing and display."
+              },
+              "content": {
+                "type": "string",
+                "maxLength": 8000,
+                "description": "The sample. UTF-8. v0.1 limit: 8000 characters."
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Producer- or user-assigned tags for retrieval."
+              },
+              "created_at": {
+                "type": "string",
+                "description": "RFC 3339."
+              }
             }
           }
         },
         "extensions": {
           "type": "object",
-          "description": "Reserved for producer-specific extensions. Same rules as fingerprint extensions (§4.5); excluded from the canonical form (§6.1)."
+          "description": "Reserved for producer-specific extensions. Same rules as fingerprint extensions (\u00a74.5); excluded from the canonical form (\u00a76.1)."
+        },
+        "revoked_instructions": {
+          "type": "array",
+          "description": "\u00a75.2 revocation tombstones. A standing instruction the subject REMOVED. A union merge cannot express a deletion, so without these any peer still holding the rule restores it. A consumer MUST drop any instruction whose identity appears here, at READ time as well as at merge time \u2014 a device that has not merged since the revocation still holds the rule. Capped by COUNT, never pruned by age: an age prune lets a device that synced before it resurrect the rule.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "description": "The instruction's content identity. Frozen format \u2014 a change silently stops every existing tombstone matching its rule."
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "When the subject revoked it. Used only for cap eviction (oldest first), never as an expiry."
+              }
+            },
+            "required": [
+              "key"
+            ],
+            "additionalProperties": true
+          },
+          "maxItems": 200
         }
       }
     }
@@ -85,59 +142,79 @@
   "$defs": {
     "standing_instruction": {
       "type": "object",
-      "description": "The §5.2 standing-instruction entry — the ONE authored-rule shape (Proposal 0007). Canonical here; fingerprint.schema.json standing_rules[] (v0.1 A-home) $refs this def so the homes stay in lockstep through the v0.2 migration. kind:'instruction' is a verbatim rule, optionally bound to a Decision&Risk dimension via decision (which marks that dimension authored-canonical in §4.7 resolution). kind:'authorization' is a deterministic §10.5 gate (match/effect, shared $defs); if it also carries text it injects too.",
-      "required": ["kind"],
+      "description": "The \u00a75.2 standing-instruction entry \u2014 the ONE authored-rule shape (Proposal 0007). Canonical here; fingerprint.schema.json standing_rules[] (v0.1 A-home) $refs this def so the homes stay in lockstep through the v0.2 migration. kind:'instruction' is a verbatim rule, optionally bound to a Decision&Risk dimension via decision (which marks that dimension authored-canonical in \u00a74.7 resolution). kind:'authorization' is a deterministic \u00a710.5 gate (match/effect, shared $defs); if it also carries text it injects too.",
+      "required": [
+        "kind"
+      ],
       "properties": {
         "instruction_id": {
           "type": "string",
           "description": "Stable id (UUID v4)."
         },
         "kind": {
-          "enum": ["instruction", "authorization"],
+          "enum": [
+            "instruction",
+            "authorization"
+          ],
           "description": "Variant discriminator (Proposal 0003 model)."
         },
         "text": {
           "type": "string",
           "maxLength": 1000,
-          "description": "Verbatim rule (§5.2). UTF-8, NFC. Injected as-is — MUST NOT be summarized. Required for instruction; optional for authorization (present → the gate also injects)."
+          "description": "Verbatim rule (\u00a75.2). UTF-8, NFC. Injected as-is \u2014 MUST NOT be summarized. Required for instruction; optional for authorization (present \u2192 the gate also injects)."
         },
         "exception": {
           "type": "string",
           "maxLength": 1000,
-          "description": "OPTIONAL boundary, rendered '(Exception: …)'."
+          "description": "OPTIONAL boundary, rendered '(Exception: \u2026)'."
         },
         "scope": {
-          "enum": ["global", "domain", "task"],
-          "description": "§5.2 scope. `global` (or absent) = always active. v0.2 (OQ5): `domain` activates only for sessions/actions whose domain matches scope_domains; `task` activates only when the session's task_hint matches scope_tasks. Deterministic consumers (§10 consultation, layer selection) treat an unmatched or unknown context as INACTIVE (fail-closed); a model-mediated injection consumer with NO session context instead renders the rule with an explicit conditional scope prefix, delegating activation to the consuming model (§5.2 activation rules)."
+          "enum": [
+            "global",
+            "domain",
+            "task"
+          ],
+          "description": "\u00a75.2 scope. `global` (or absent) = always active. v0.2 (OQ5): `domain` activates only for sessions/actions whose domain matches scope_domains; `task` activates only when the session's task_hint matches scope_tasks. Deterministic consumers (\u00a710 consultation, layer selection) treat an unmatched or unknown context as INACTIVE (fail-closed); a model-mediated injection consumer with NO session context instead renders the rule with an explicit conditional scope prefix, delegating activation to the consuming model (\u00a75.2 activation rules)."
         },
         "scope_domains": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "minItems": 1,
-          "description": "DOMAIN scope only (required when scope='domain') — the domains this instruction activates for. Same case-insensitive substring namespace as action_descriptor.domain / match.domains / session_context.domain: the instruction is active when the session's domain string CONTAINS one of these entries (lowercased)."
+          "description": "DOMAIN scope only (required when scope='domain') \u2014 the domains this instruction activates for. Same case-insensitive substring namespace as action_descriptor.domain / match.domains / session_context.domain: the instruction is active when the session's domain string CONTAINS one of these entries (lowercased)."
         },
         "scope_tasks": {
           "type": "array",
-          "items": { "type": "string", "minLength": 1 },
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
           "minItems": 1,
-          "description": "TASK scope only (required when scope='task') — task descriptors this instruction activates for, matched case-insensitively as substrings of the session's task_hint (§9.2)."
+          "description": "TASK scope only (required when scope='task') \u2014 task descriptors this instruction activates for, matched case-insensitively as substrings of the session's task_hint (\u00a79.2)."
         },
         "priority": {
           "type": "integer",
-          "description": "§5.2 ordering hint; lower injects first. Ties broken by created_at."
+          "description": "\u00a75.2 ordering hint; lower injects first. Ties broken by created_at."
         },
         "decision": {
           "type": "object",
-          "description": "OPTIONAL (instruction). Binding to one Decision&Risk dimension; present → the projection/consultation treats it authored-canonical (§4.7 'authored overrides inferred').",
-          "required": ["dimension"],
+          "description": "OPTIONAL (instruction). Binding to one Decision&Risk dimension; present \u2192 the projection/consultation treats it authored-canonical (\u00a74.7 'authored overrides inferred').",
+          "required": [
+            "dimension"
+          ],
           "properties": {
             "dimension": {
               "type": "string",
               "description": "evidence_threshold | ambiguity_posture | options_vs_recommendation | speed_vs_quality | reversible_vs_irreversible (spec/layer-vocabulary.json)."
             },
             "polarity": {
-              "enum": ["positive", "negative"],
-              "description": "§4.3. A negative authored rule is canonical over a contradicting inferred positive."
+              "enum": [
+                "positive",
+                "negative"
+              ],
+              "description": "\u00a74.3. A negative authored rule is canonical over a contradicting inferred positive."
             },
             "value": {
               "type": "string",
@@ -148,60 +225,123 @@
               "description": "OPTIONAL domain scope, same case-insensitive substring namespace as action_descriptor.domain / match.domains."
             },
             "origin": {
-              "enum": ["self", "delegation"],
-              "description": "OPTIONAL — the act-for-me vs act-as-me channel (mirrors signals[].origin). Absent/`self` = how the subject decides themselves. `delegation` = how they want an agent to act on their behalf — carried when the rule was endorsed from a delegation-promoted suggestion (`source:\"delegation_promotion\"`), so the resolver/projection treat it as the act-as-me preference for that dimension."
+              "enum": [
+                "self",
+                "delegation"
+              ],
+              "description": "OPTIONAL \u2014 the act-for-me vs act-as-me channel (mirrors signals[].origin). Absent/`self` = how the subject decides themselves. `delegation` = how they want an agent to act on their behalf \u2014 carried when the rule was endorsed from a delegation-promoted suggestion (`source:\"delegation_promotion\"`), so the resolver/projection treat it as the act-as-me preference for that dimension."
             }
           }
         },
         "match": {
           "$ref": "consultation-policy.schema.json#/$defs/match",
-          "description": "AUTHORIZATION only — §10.5 matcher. Optional (matchless = matches all)."
+          "description": "AUTHORIZATION only \u2014 \u00a710.5 matcher. Optional (matchless = matches all)."
         },
         "effect": {
           "$ref": "consultation-policy.schema.json#/$defs/effect",
-          "description": "AUTHORIZATION only — §10.5 effect. Required when kind=authorization."
+          "description": "AUTHORIZATION only \u2014 \u00a710.5 effect. Required when kind=authorization."
         },
         "note": {
           "type": "string",
-          "description": "AUTHORIZATION only — resolver rationale_hint source (back-compat with consult_policies.note)."
+          "description": "AUTHORIZATION only \u2014 resolver rationale_hint source (back-compat with consult_policies.note)."
         },
         "expires_at": {
           "type": "string",
-          "description": "AUTHORIZATION only — OPTIONAL RFC 3339. Conditional/revocable authority (§10.5): the authorization lapses (stops applying) once this instant passes. ENFORCED (authority-narrowing, fail-safe)."
+          "description": "AUTHORIZATION only \u2014 OPTIONAL RFC 3339. Conditional/revocable authority (\u00a710.5): the authorization lapses (stops applying) once this instant passes. ENFORCED (authority-narrowing, fail-safe)."
         },
         "agents": {
           "type": "array",
-          "items": { "type": "string" },
-          "description": "AUTHORIZATION only — OPTIONAL, ENFORCED (§10.5). Scope to specific PAIRED CLIENTS: opaque phone-issued `client_id` values, compared exactly, matched against the RESOLVER'S OWN pairing identity — never the self-asserted `agent_id`. ENFORCED for authority-expanding effects (`autoproceed`, `bias_bold`) only; restrictive rules apply regardless of scope. Authority-narrowing, like `expires_at` and `require_binding`: unlisted or unpaired means the rule does not apply, never that it applies more broadly. ABSENT ≠ EMPTY: omitting the field leaves the rule unscoped (every client); an empty array is a scope naming no client and matches none. An authoring surface that deselects every client MUST write [] rather than omit the field. Entries MUST be strings; non-strings are dropped, not coerced."
+          "items": {
+            "type": "string"
+          },
+          "description": "AUTHORIZATION only \u2014 OPTIONAL, ENFORCED (\u00a710.5). Scope to specific PAIRED CLIENTS: opaque phone-issued `client_id` values, compared exactly, matched against the RESOLVER'S OWN pairing identity \u2014 never the self-asserted `agent_id`. ENFORCED for authority-expanding effects (`autoproceed`, `bias_bold`) only; restrictive rules apply regardless of scope. Authority-narrowing, like `expires_at` and `require_binding`: unlisted or unpaired means the rule does not apply, never that it applies more broadly. ABSENT \u2260 EMPTY: omitting the field leaves the rule unscoped (every client); an empty array is a scope naming no client and matches none. An authoring surface that deselects every client MUST write [] rather than omit the field. Entries MUST be strings; non-strings are dropped, not coerced."
         },
         "require_binding": {
           "type": "boolean",
           "default": false,
-          "description": "AUTHORIZATION only — OPTIONAL (§10.5). Apply this rule only to requests carrying a valid §10.2 `action_binding`. ENFORCED for authority-expanding effects (`autoproceed`, `bias_bold`) only; restrictive rules apply regardless. Authority-narrowing, like `expires_at`."
+          "description": "AUTHORIZATION only \u2014 OPTIONAL (\u00a710.5). Apply this rule only to requests carrying a valid \u00a710.2 `action_binding`. ENFORCED for authority-expanding effects (`autoproceed`, `bias_bold`) only; restrictive rules apply regardless. Authority-narrowing, like `expires_at`."
         },
         "source": {
-          "enum": ["interview", "interview_template", "delta_promotion", "delegation_promotion", "autonomy_promotion"],
-          "description": "OPTIONAL provenance: how the rule was authored — hand-written in onboarding (`interview`), endorsed from a selected seed template in onboarding (`interview_template`), by endorsing a delta-promoted inferred-pattern suggestion (`delta_promotion`), by endorsing a delegation-promoted suggestion built from the subject's consult override history (`delegation_promotion`, an act-as-me rule), or by endorsing an autonomy-promoted §10.5 `autoproceed` authorization built from a class of actions the subject repeatedly and deliberately approved (`autonomy_promotion`, §10.7). All are authored: endorsement is the write."
+          "enum": [
+            "interview",
+            "interview_template",
+            "delta_promotion",
+            "delegation_promotion",
+            "autonomy_promotion"
+          ],
+          "description": "OPTIONAL provenance: how the rule was authored \u2014 hand-written in onboarding (`interview`), endorsed from a selected seed template in onboarding (`interview_template`), by endorsing a delta-promoted inferred-pattern suggestion (`delta_promotion`), by endorsing a delegation-promoted suggestion built from the subject's consult override history (`delegation_promotion`, an act-as-me rule), or by endorsing an autonomy-promoted \u00a710.5 `autoproceed` authorization built from a class of actions the subject repeatedly and deliberately approved (`autonomy_promotion`, \u00a710.7). All are authored: endorsement is the write."
         },
-        "created_at": { "type": "string", "description": "RFC 3339." },
-        "updated_at": { "type": "string", "description": "RFC 3339." }
+        "created_at": {
+          "type": "string",
+          "description": "RFC 3339."
+        },
+        "updated_at": {
+          "type": "string",
+          "description": "RFC 3339."
+        }
       },
       "allOf": [
         {
-          "if": { "properties": { "kind": { "const": "instruction" } } },
-          "then": { "required": ["text"] }
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "instruction"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "text"
+            ]
+          }
         },
         {
-          "if": { "properties": { "kind": { "const": "authorization" } } },
-          "then": { "required": ["effect"] }
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "authorization"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "effect"
+            ]
+          }
         },
         {
-          "if": { "properties": { "scope": { "const": "domain" } }, "required": ["scope"] },
-          "then": { "required": ["scope_domains"] }
+          "if": {
+            "properties": {
+              "scope": {
+                "const": "domain"
+              }
+            },
+            "required": [
+              "scope"
+            ]
+          },
+          "then": {
+            "required": [
+              "scope_domains"
+            ]
+          }
         },
         {
-          "if": { "properties": { "scope": { "const": "task" } }, "required": ["scope"] },
-          "then": { "required": ["scope_tasks"] }
+          "if": {
+            "properties": {
+              "scope": {
+                "const": "task"
+              }
+            },
+            "required": [
+              "scope"
+            ]
+          },
+          "then": {
+            "required": [
+              "scope_tasks"
+            ]
+          }
         }
       ]
     }

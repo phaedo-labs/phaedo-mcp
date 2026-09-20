@@ -27,7 +27,11 @@ const SIGN_RESPONSE_KIND = 'sign_response';
 const AP2_SIGNATURE_FIELD = 'signature';
 
 export function relayBaseFromEnv(env = process.env) {
-  return env.PHAEDO_RELAY_URL || DEFAULT_RELAY;
+  // PHAEDO_RELAY is the name every other lane reads (escalation, receipts, capture, delegation).
+  // This one read PHAEDO_RELAY_URL alone, so a self-hosted relay silently did NOT cover the §8.3
+  // signing ceremony — sign requests kept going to the default host. The old name is still
+  // honoured so an existing setup does not break.
+  return env.PHAEDO_RELAY || env.PHAEDO_RELAY_URL || DEFAULT_RELAY;
 }
 
 function relayAuthHeader(pairing) {

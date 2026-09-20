@@ -12,6 +12,18 @@
 // top of the existing last-write-wins for the inferred parts. Union is the safe
 // direction: the worst case is a duplicate or a resurrected deletion, never a loss.
 //
+// ⚠️ THAT IS TRUE OF `reconcileAuthored` AND OF THE §5 MERGE, AND ONLY PARTLY TRUE OF THE
+// MAILBOX PATH. `mergeFingerprintForLocal` → `assembleMerged` takes the authored WINNER's
+// rules and keeps from the loser only its promotion-sourced ones (delta / conflict / delegation),
+// so a hand-authored rule that exists only on the side that LOST the authored clock is dropped
+// there — and on an exact clock tie the phone argument wins. Measured 2026-09-13 with 400
+// randomized two-device trials: convergent whenever the clocks differ; direction-dependent on
+// every tie. Ties are effectively unreachable in practice (millisecond clocks, and every authored
+// write stamps one), and post-cutover §5 — which does union, with tombstones — is the home that
+// governs, so this is recorded rather than changed: making the A-home mirror union on a tie is
+// the D11 decision (docs/reviews/full-audit-2026-07-28.md), an owner call about which surface
+// is authoritative, not a bug fix.
+//
 // Pure + dependency-free. Loaded as a classic script in popup.html (exposes
 // globalThis.PhaedoSyncMerge) and required by scripts/test_sync_merge.mjs.
 
@@ -27,12 +39,68 @@
     return JSON.stringify(v === undefined ? null : v);
   }
 
-  // A standing rule's identity is its content, not its instruction_id (each device
-  // mints its own id, so ids never match across a sync). Dedup by dimension + text.
-  function ruleKey(r) {
+  // Fields that do NOT define a rule's identity: per-device ids (each device mints its own,
+  // so they never match across a sync), presentation, clocks, and lifetime. Two copies of the
+  // same authorization differing only in these — a renewed `expires_at`, a re-typed note — are
+  // the SAME rule, and keying on them would let both survive as duplicates.
+  const RULE_VOLATILE = new Set([
+    'instruction_id', 'id', 'note', 'priority', 'source',
+    'created_at', 'updated_at', 'expires_at',
+  ]);
+
+  // Order-insensitive stable serialization, for identity only. `domains`, `agents`,
+  // `scope_domains` and `scope_tasks` are SETS — two devices listing them in different orders
+  // have not authored different rules. Never applied to stored data, only to the key.
+  function stableIdentity(v) {
+    if (Array.isArray(v)) return '[' + v.map(stableIdentity).sort().join(',') + ']';
+    if (v && typeof v === 'object') {
+      return '{' + Object.keys(v).sort()
+        .map(k => JSON.stringify(k) + ':' + stableIdentity(v[k])).join(',') + '}';
+    }
+    return JSON.stringify(v === undefined ? null : v);
+  }
+
+  /**
+   * A standing rule's identity is its CONTENT, not its instruction_id.
+   *
+   * Rules carrying `text` key exactly as they always have — dimension + text — so this changes
+   * nothing for them. §5.2 AUTHORIZATIONS have no `text` at all (they carry `match` + `effect`;
+   * see rule-review.js endorseAuthorization), and they used to be dropped outright by the merge
+   * rather than keyed. Every sync therefore deleted an endorsed act-as-me autoproceed grant, and
+   * an `escalate`/`decline` prohibition with it — the latter failing toward LESS caution.
+   *
+   * They now key on the fields that define them, with the volatile ones removed. The key is a
+   * tagged JSON array so the two key spaces cannot alias — a rule whose text happened to look
+   * like a serialized shape must not collide with the shape it resembles.
+   *
+   * ⚠️ THE FORMAT IS FROZEN AT v1. §5.2 revocation TOMBSTONES persist this string and travel
+   * between devices and across versions, so a format change silently stops every existing
+   * tombstone matching its rule — every revocation reverts, with nothing to report it. That is
+   * the same silent class the tombstones exist to close. A new shape needs a NEW tag alongside
+   * this one and a migration, never an edit here.
+   */
+  function instructionKey(r) {
     const dim = r && r.decision && r.decision.dimension ? String(r.decision.dimension) : '';
     const text = r && r.text ? String(r.text).trim().toLowerCase() : '';
-    return dim + ' ' + text;
+    if (text) return JSON.stringify(['text', dim, text]);
+    if (!r || typeof r !== 'object') return JSON.stringify(['text', dim, '']);
+    const shape = {};
+    for (const k of Object.keys(r)) if (!RULE_VOLATILE.has(k)) shape[k] = r[k];
+    return JSON.stringify(['shape', dim, stableIdentity(shape)]);
+  }
+
+  /**
+   * Is this entry a RULE at all? The old merge used `!r.text` for this, which is what dropped
+   * every authorization. A non-text rule still has to look like one — otherwise `{}` and other
+   * junk would now propagate where it used to be filtered out.
+   */
+  function isMergeableRule(r) {
+    if (!r || typeof r !== 'object') return false;
+    if (r.text) return true;
+    // No text: an AUTHORIZATION is the only §5.2 shape that is well-formed without one — it
+    // carries `match` + `effect` instead. A textless `instruction` is malformed (the §5
+    // validator rejects it too) and keeps being dropped, exactly as before.
+    return r.kind === 'authorization' && !!r.effect;
   }
 
   // When the same rule exists on both sides, keep the richer copy — the one carrying
@@ -42,25 +110,90 @@
     return (r && r.decision && r.decision.value != null ? 2 : 0) + (r && r.exception ? 1 : 0);
   }
 
-  function mergeStandingRules(localRules, phoneRules) {
+  // `opts.preferredIsNewer` — the caller has compared the two AUTHORED CLOCKS and knows the first
+  // list is strictly newer. Then a rule present on both sides is settled by the clock, not by
+  // content: the newer copy wins even when it is POORER.
+  //
+  // That last word is the whole fix (D8). `richness` prefers the copy carrying an exception or a
+  // structured decision value, which is right for a genuine concurrent edit — but a subject who
+  // re-types a rule to REMOVE its exception produces a newer copy that scores lower, so their own
+  // older copy beat it and the exception kept narrowing the rule. A content heuristic must not be
+  // able to revert an authored deletion.
+  //
+  // On a TIE (equal or unknown clocks) the heuristics still run. Under genuine uncertainty about
+  // which side is newer, preserving content is the safe direction; that is the concurrent-edit
+  // case the heuristics were written for, and it is unchanged.
+  function mergeStandingRules(localRules, phoneRules, opts) {
+    const preferredIsNewer = !!(opts && opts.preferredIsNewer);
     const out = [];
+    const from = [];                     // parallel: did out[i] come from the PREFERRED list?
     const idx = new Map();
-    const all = [
-      ...(Array.isArray(localRules) ? localRules : []),
-      ...(Array.isArray(phoneRules) ? phoneRules : []),
-    ];
-    for (const r of all) {
-      if (!r || typeof r !== 'object' || !r.text) continue;
-      const k = ruleKey(r);
+    const first = Array.isArray(localRules) ? localRules : [];
+    const all = [...first, ...(Array.isArray(phoneRules) ? phoneRules : [])];
+    for (let n = 0; n < all.length; n++) {
+      const r = all[n];
+      const preferred = n < first.length;
+      if (!isMergeableRule(r)) continue;
+      const k = instructionKey(r);
       if (idx.has(k)) {
         const i = idx.get(k);
-        if (richness(r) > richness(out[i])) out[i] = r;
+        if (!preferredIsNewer && richness(r) > richness(out[i])) from[i] = preferred;
+        // Same rule from both sides. With a decided clock the first list is the newer one and
+        // its copy stands. Otherwise keep the richer copy; two authorizations that key the same
+        // both score 0, so the first still wins, which is what makes a renewed `expires_at` win
+        // over the stale one it replaces.
+        if (!preferredIsNewer && richness(r) > richness(out[i])) out[i] = r;
       } else {
         idx.set(k, out.length);
         out.push(r);
+        from.push(preferred);
       }
     }
-    return out;
+    return narrowedAgentScopes(out, from, preferredIsNewer);
+  }
+
+  /** Identity for a TEXTLESS authorization ignoring `agents` — see narrowedAgentScopes. */
+  function scopeBlindIdentity(r) {
+    if (!r || typeof r !== 'object' || r.text) return null;
+    const shape = {};
+    for (const k of Object.keys(r)) if (!RULE_VOLATILE.has(k) && k !== 'agents') shape[k] = r[k];
+    return stableIdentity(shape);
+  }
+
+  /**
+   * NARROWING AN AUTHORIZATION'S `agents` LIST IS AN EDIT, NOT A NEW RULE (D4).
+   *
+   * `instructionKey` keys a textless authorization by its whole shape minus RULE_VOLATILE, and
+   * `agents` is in that shape — so removing a client from the list minted a DIFFERENT rule and
+   * the union kept both. The denied client still matched the wide copy and kept getting
+   * `proceed` at confidence 1.0. The subject revoked an agent and nothing changed.
+   *
+   * A rule WITH text never had this problem: its key is ['text', dimension, text], so `agents`
+   * was already outside its identity. The two shapes disagreed, and that disagreement was the bug.
+   *
+   * WHY NOT JUST ADD `agents` TO RULE_VOLATILE: `instructionKey`'s output is FROZEN — §5.2
+   * revocation tombstones persist it, so changing what it produces would orphan every tombstone
+   * already written for an authorization. This runs after the union instead and leaves the key
+   * untouched.
+   *
+   * Only applies when the CLOCK decided, and only drops copies from the older side. On a tie
+   * neither side is known to be newer, so both survive — the same fail direction as D5/D8: an
+   * authored narrowing is honoured when it can be proven newer, never guessed at.
+   */
+  function narrowedAgentScopes(out, from, preferredIsNewer) {
+    if (!preferredIsNewer) return out;
+    const preferredIds = new Set();
+    for (let i = 0; i < out.length; i++) {
+      if (!from[i]) continue;
+      const id = scopeBlindIdentity(out[i]);
+      if (id != null) preferredIds.add(id);
+    }
+    if (!preferredIds.size) return out;
+    return out.filter((r, i) => {
+      if (from[i]) return true;                       // the newer side's own copy always stays
+      const id = scopeBlindIdentity(r);
+      return id == null || !preferredIds.has(id);     // an older copy of the same grant goes
+    });
   }
 
   // A rule_elicitation answer is recognizable by its boolean `endorsed` field — so the
@@ -69,7 +202,12 @@
     return v && typeof v === 'object' && typeof v.endorsed === 'boolean';
   }
 
-  function mergeRuleAnswers(localAnswers, phoneAnswers) {
+  // Same `opts.preferredIsNewer` contract as mergeStandingRules, for the same reason (D5).
+  // Endorsed-beats-un-endorsed is the right call between two copies of unknown age — but
+  // UN-ENDORSING is a first-class action in the UI, and it produces a copy that always loses to
+  // the stale endorsed one. The subject withdrew an answer and watched it come back.
+  function mergeRuleAnswers(localAnswers, phoneAnswers, opts) {
+    const preferredIsNewer = !!(opts && opts.preferredIsNewer);
     const la = localAnswers || {};
     const pa = phoneAnswers || {};
     const ids = new Set([
@@ -80,7 +218,8 @@
     for (const id of ids) {
       const l = la[id], p = pa[id];
       if (isRuleAnswer(l) && isRuleAnswer(p)) {
-        if (l.endorsed && !p.endorsed) merged[id] = l;
+        if (preferredIsNewer) merged[id] = l;                 // clock decided; a withdrawal stands
+        else if (l.endorsed && !p.endorsed) merged[id] = l;
         else if (p.endorsed && !l.endorsed) merged[id] = p;
         else {
           // both endorsed (or both not): prefer the more-edited (longer) text; tie → local
@@ -219,8 +358,20 @@
   function reconcileAuthored(localFp, phoneFp) {
     const local = localFp || {};
     const phone = phoneFp || {};
-    const standingRules = mergeStandingRules(local.standing_rules, phone.standing_rules);
-    const ruleAnswers   = mergeRuleAnswers(local.answers, phone.answers);
+    // WHICH SIDE IS NEWER, decided before either merge runs. This used to pass `local` first
+    // unconditionally, and mergeStandingRules' own comment justified its tie-break by claiming
+    // "the side with the newer authored clock" was always first — which nothing checked. So a
+    // phone-authored removal lost to the extension's older copy on content grounds alone.
+    //
+    // A tie leaves `decided` false and both merges fall back to their content heuristics, which
+    // is the concurrent-edit case they were written for.
+    const lr = authoredClock(local);
+    const pr = authoredClock(phone);
+    const decided = lr !== pr;
+    const newer = pr > lr ? phone : local;
+    const older = pr > lr ? local : phone;
+    const standingRules = mergeStandingRules(newer.standing_rules, older.standing_rules, { preferredIsNewer: decided });
+    const ruleAnswers   = mergeRuleAnswers(newer.answers, older.answers, { preferredIsNewer: decided });
     // Guardrails are authored authority too — union them here so the live /v1/profile
     // reconcile (reconcile-decision.js applyAuthored) can carry them onto whichever
     // fingerprint wins the inferred race, instead of dropping the subject's decisions.
@@ -230,18 +381,43 @@
     const commitments = mergeCommitments(local.commitments, phone.commitments);
     // Tombstones ride the signature too: a sync whose ONLY change is a revocation still has
     // to be written back, or the side that hasn't seen the tombstone keeps the dead rule.
-    const sigOf = (sr, ans, cp, cm) =>
+    // The REVIEW QUEUES ride the signature too, or the union above is computed and then thrown
+    // away: `changedLocal` / `changedPhone` are what decide whether anything is written at all, so
+    // a sync whose only change is "the subject dismissed this card on the phone" looked like a
+    // no-op and the dismissal never reached the extension.
+    //
+    // Only the ID and the ANSWER go in — never `last_seen` or `detected_at`. Those churn on every
+    // detection pass, and putting them in the signature would make every sync report a change and
+    // push forever. Same discipline as RULE_VOLATILE.
+    const queueSig = (q) => JSON.stringify([
+      (Array.isArray(q?.conflict_records) ? q.conflict_records : [])
+        .map(r => [r?.conflict_id, _isConflictActed(r)]).sort(),
+      (Array.isArray(q?.suggested_rules) ? q.suggested_rules : [])
+        .map(r => [r?.suggestion_id, r?.status || 'suggested']).sort(),
+    ]);
+    const sigOf = (sr, ans, cp, cm, q) =>
       authoredSig(sr, ans) + '|' + JSON.stringify(cp?.rules || []) +
       '|' + JSON.stringify((cp?.revoked || []).map(t => consultPolicyKey(t)).sort()) +
-      '|' + JSON.stringify((cm || []).map(c => c?.commitment_id).sort());
-    const mergedSig = sigOf(standingRules, ruleAnswers, consultPolicies, commitments);
+      '|' + JSON.stringify((cm || []).map(c => c?.commitment_id).sort()) +
+      '|' + queueSig(q);
+    // REVIEW QUEUES ride the authored axis too (D3). The mailbox path already unions them via
+    // `preserveReviewQueues`; the LIVE /v1/profile path (reconcile-decision.js applyAuthored)
+    // rebuilt the fingerprint carrying only the fields it knew about, so on the phone-newer
+    // branch the extension's `conflict_records` and `suggested_rules` were replaced by the
+    // phone's — usually absent. Dismissed suggestions and acknowledged overrides came back as
+    // unanswered cards. This is the same defect guardrails and commitments each had, and the
+    // same fix: return the union so the live path can carry it. One implementation — the two
+    // consumers call the same `_unionById`.
+    const reviewQueues = mergeReviewQueues(local, phone);
+    const mergedSig = sigOf(standingRules, ruleAnswers, consultPolicies, commitments, reviewQueues);
     return {
       standingRules,
       ruleAnswers,
       consultPolicies,
       commitments,
-      changedLocal: mergedSig !== sigOf(local.standing_rules || [], ruleAnswersOf(local.answers), local.consult_policies, local.commitments),
-      changedPhone: mergedSig !== sigOf(phone.standing_rules || [], ruleAnswersOf(phone.answers), phone.consult_policies, phone.commitments),
+      reviewQueues,
+      changedLocal: mergedSig !== sigOf(local.standing_rules || [], ruleAnswersOf(local.answers), local.consult_policies, local.commitments, local),
+      changedPhone: mergedSig !== sigOf(phone.standing_rules || [], ruleAnswersOf(phone.answers), phone.consult_policies, phone.commitments, phone),
     };
   }
 
@@ -355,16 +531,21 @@
     }
     return Array.from(byId.values());
   }
+  /** The unioned queues, as data. Both consumers (the mailbox merge and the live reconcile) go
+   *  through this, so they cannot drift the way they had. */
+  function mergeReviewQueues(localFp, phoneFp) {
+    const arr = (fp, k) => (Array.isArray(fp && fp[k]) ? fp[k] : []);
+    return {
+      conflict_records: _unionById(arr(localFp, 'conflict_records'), arr(phoneFp, 'conflict_records'),
+        'conflict_id', _isConflictActed, _conflictTs),
+      suggested_rules: _unionById(arr(localFp, 'suggested_rules'), arr(phoneFp, 'suggested_rules'),
+        'suggestion_id', _isSuggestionActed, _suggestionTs),
+    };
+  }
   function preserveReviewQueues(out, localFp, phoneFp) {
-    const cl = Array.isArray(localFp && localFp.conflict_records) ? localFp.conflict_records : [];
-    const cp = Array.isArray(phoneFp && phoneFp.conflict_records) ? phoneFp.conflict_records : [];
-    const conflicts = _unionById(cl, cp, 'conflict_id', _isConflictActed, _conflictTs);
-    if (conflicts.length) out.conflict_records = conflicts; else delete out.conflict_records;
-
-    const sl = Array.isArray(localFp && localFp.suggested_rules) ? localFp.suggested_rules : [];
-    const sp = Array.isArray(phoneFp && phoneFp.suggested_rules) ? phoneFp.suggested_rules : [];
-    const suggestions = _unionById(sl, sp, 'suggestion_id', _isSuggestionActed, _suggestionTs);
-    if (suggestions.length) out.suggested_rules = suggestions; else delete out.suggested_rules;
+    const q = mergeReviewQueues(localFp, phoneFp);
+    if (q.conflict_records.length) out.conflict_records = q.conflict_records; else delete out.conflict_records;
+    if (q.suggested_rules.length) out.suggested_rules = q.suggested_rules; else delete out.suggested_rules;
   }
 
   // Combine an inferred base with the authored content from authoredWinner (preserving
@@ -419,7 +600,33 @@
     // carry the extension-local review queues (conflict_records / suggested_rules)
     preserveReviewQueues(out, localFp, phoneFp);
 
+    preserveLocalStamps(out, localFp);
+
     return out;
+  }
+
+  // ARTIFACT METADATA THE PHONE DOES NOT CARRY — kept from the local copy (2026-09-19).
+  //
+  // `out` starts from whichever side is newer, and when that is the phone every field the phone's
+  // copy lacks is dropped. For authored content that is the point (absence can mean deletion, and
+  // the sections above each decide it deliberately). For these five it is not: they describe the
+  // ARTIFACT, are deterministic or set once, and the phone simply never stamps them.
+  //
+  // Dropping them was not merely untidy, it FLASHED: the extension re-stamps on write (migration
+  // stampProtocolFields / projectFingerprintToV02), so every popup open re-merged the same phone
+  // deposit, saw the stamps missing, wrote "a change", and the popup reloaded itself — a blank
+  // flicker on every single open. Measured in a real browser, three opens out of three.
+  //
+  // Only filled when absent from `out`: a phone that does carry one still wins.
+  const LOCAL_STAMP_FIELDS = [
+    'phaedo_protocol_version', 'schema_revision', 'fingerprint_envelope_version',
+    'fingerprint_version', 'created_at',
+  ];
+  function preserveLocalStamps(out, localFp) {
+    if (!out || !localFp) return;
+    for (const k of LOCAL_STAMP_FIELDS) {
+      if (out[k] === undefined && localFp[k] !== undefined) out[k] = localFp[k];
+    }
   }
 
   // Merge agent-deposited delegation suggestions (MCP → relay → extension — the act-as-me
@@ -493,7 +700,11 @@
     return { ...localFp, suggested_rules: capped };
   }
 
-  const api = { mergeStandingRules, mergeRuleAnswers, reconcileAuthored, mergeFingerprintForLocal, mergeAgentSuggestions, mergeConsultPolicies, consultPolicyKey, mergeCommitments };
+  // `richness` is exported for one reason: context-block.js collapses duplicate rules at the
+  // INJECTION seam and must make the same choice this merge does, or the merge keeps the copy
+  // carrying an authored exception and the block then discards it. Exported so
+  // scripts/test_injection_integrity.mjs can assert that coupling instead of asserting it in prose.
+  const api = { instructionKey, richness, mergeStandingRules, mergeRuleAnswers, reconcileAuthored, mergeFingerprintForLocal, mergeAgentSuggestions, mergeConsultPolicies, consultPolicyKey, mergeCommitments, authoredClock, hasAuthoredContent };
   if (typeof globalThis !== 'undefined') globalThis.PhaedoSyncMerge = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })();

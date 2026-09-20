@@ -120,8 +120,15 @@ console.log('\nspend ceiling');
 
   const out = buildAutonomyPromotions(priced([20, 25, 30, 22, 28, 900]), {}, { now: NOW });
   ok(out.length === 1, 'a priced class IS now promotable');
-  ok(out[0].match.amount_lt === 30, `ceiling is the second-highest (30), not the 900 outlier — got ${out[0].match.amount_lt}`);
-  ok(/under 30/.test(out[0].proposed_text), 'the ceiling appears in the sentence the subject reads');
+  // `amount_lte`, not `amount_lt` (M7). The ceiling is the second-highest amount APPROVED, so an
+  // exclusive bound excludes the purchases that earned the grant — five $20 approvals minted a
+  // rule matching `amount < 20`, unfireable by construction and silently so.
+  ok(out[0].match.amount_lte === 30, `ceiling is the second-highest (30), not the 900 outlier — got ${out[0].match.amount_lte}`);
+  ok(out[0].match.amount_lt === undefined, 'and the exclusive form is not staged alongside it');
+  ok(/up to 30/.test(out[0].proposed_text),
+     'the ceiling appears in the sentence the subject reads, and says "up to" — the bound is '
+     + 'INCLUSIVE now (M7), and prose reading "under 30" for a rule that fires AT 30 misdescribes '
+     + 'the authority on the one screen where accuracy is consent');
 
   // A class with exactly one priced approval among unpriced ones still can't justify one.
   const mixed = [rcpt({ agoDays: 1, amount: 50 }), ...Array.from({ length: 5 }, (_, i) => rcpt({ agoDays: i + 2 }))];
