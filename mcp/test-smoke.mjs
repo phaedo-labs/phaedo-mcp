@@ -88,6 +88,12 @@ async function integration() {
   const client = new Client({ name: 'phaedo-smoke', version: '0.0.0' });
   await client.connect(transport);
 
+  // The server's how-to-use note: the only place an app is told the order of the tools.
+  const instructions = client.getInstructions() || '';
+  ok(['phaedo_request_injection', 'phaedo_consult', 'phaedo_record_outcome'].every((t) => instructions.includes(t)),
+     'server instructions name the session-start, consult and outcome tools');
+  ok(/no Phaedo profile is set up/i.test(instructions), 'server instructions say what to do when there is no profile');
+
   const tools = await client.listTools();
   ok(tools.tools.some(t => t.name === 'phaedo_request_injection'), 'tool registered');
 

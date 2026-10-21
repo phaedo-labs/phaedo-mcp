@@ -149,10 +149,14 @@ receipts-audit surfaces (the tools table above) shipped on top of these across t
   `../docs/roadmap/mcp-revocable-approval-plan.md`. Phone-gated unlock stays a
   deferred enterprise mode behind a config flag.
 
-**No conversation capture.** MCP never returns the conversation, so your
-fingerprint does not learn from MCP sessions (binding §5). (Consultation,
-escalation, and `phaedo_record_outcome` shape and record *decisions*, but none
-capture conversation text into the fingerprint.)
+**Conversation capture is opt-in.** The MCP protocol never hands a server the
+conversation, so the server itself learns nothing from your chats (binding §5).
+Consultation, escalation and `phaedo_record_outcome` record *decisions*, not
+conversation text. Capture happens only through things you turn on: the Claude
+Code hooks (`npm run setup:code-hook`; see *Capture from Claude Code / Cowork*
+below) and, on a Mac, the separately installed accessibility reader that feeds
+`capture-a11y.js`. Both read on this computer, keep only signal names and
+counts, and discard the text.
 Local **stdio** only; **standard** mode only (enhanced-privacy/Stained-Glass and
 remote HTTP/SSE are out of this cut).
 

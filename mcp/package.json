@@ -1,10 +1,10 @@
 {
   "name": "phaedo-mcp",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": false,
   "license": "Apache-2.0",
   "type": "module",
-  "description": "Phaedo MCP server \u2014 inject your cognitive fingerprint into any MCP client, and consult your decision pattern at agent decision points (docs/protocol/mcp-binding.md).",
+  "description": "Lets Claude, Cursor and other MCP apps answer in your style, check with you before acting, send decisions to your phone to approve, and ask you to sign purchase approvals with Face ID. Needs the Phaedo phone app; set PHAEDO_FINGERPRINT=sample to try it.",
   "mcpName": "io.github.phaedo-labs/phaedo-mcp",
   "homepage": "https://phaedo.so",
   "repository": {
@@ -14,11 +14,20 @@
   },
   "keywords": [
     "mcp",
+    "mcp-server",
     "model-context-protocol",
+    "claude",
+    "claude-code",
+    "cursor",
     "personalization",
-    "fingerprint",
-    "consultation",
-    "agent"
+    "human-in-the-loop",
+    "approval",
+    "guardrails",
+    "agent",
+    "ai-agents",
+    "ap2",
+    "agent-payments",
+    "anamnesis"
   ],
   "bin": {
     "phaedo-mcp": "server.js"

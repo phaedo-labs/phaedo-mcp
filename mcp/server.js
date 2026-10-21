@@ -190,7 +190,18 @@ if (existsSync(ESCALATION_POLICY_PATH)) {
 // been the package's for two months. One source of truth; test-package-closure.mjs
 // asserts the two agree.
 const PKG_VERSION = JSON.parse(readFileSync(join(BASE_DIR, 'package.json'), 'utf8')).version;
-const server = new McpServer({ name: 'phaedo', version: PKG_VERSION });
+// The one place a client is told how the tools fit together. Without it an app saw eight
+// tool descriptions and nothing saying "load the profile first" or "consult before you ship" —
+// so whether Phaedo was used at all depended on the model guessing. Short on purpose: clients
+// put this in the model's context on every turn.
+const SERVER_INSTRUCTIONS = [
+  'Phaedo holds the user\'s profile: how they like answers written, and how they want decisions handled when an AI acts for them.',
+  '- At the start of a session, call phaedo_request_injection once and treat the returned projection as background on the user\'s style.',
+  '- Before a consequential action for the user (merging, deploying, publishing, sending a message, spending money, deleting, changing an account or setting), call phaedo_consult and follow its signal. If you are acting on your own and the decision should be the user\'s, use phaedo_escalate and do not proceed until it resolves.',
+  '- When the user reacts to an action you consulted on, call phaedo_record_outcome with its receipt_id: record what they chose, never what you inferred.',
+  '- If a tool says no Phaedo profile is set up, tell the user once, plainly, and carry on normally. Do not retry.',
+].join('\n');
+const server = new McpServer({ name: 'phaedo', version: PKG_VERSION }, { instructions: SERVER_INSTRUCTIONS });
 
 // ── Tool: phaedo_request_injection (binding §3.1) ─────────────────────────────
 server.registerTool(
@@ -252,8 +263,8 @@ const ACTION_BINDING_SCHEMA = z
   .optional()
   .describe(
     'Binds this consultation to the concrete call it describes. The action_descriptor is your ACCOUNT of the action; ' +
-    'this is the action. Recorded on the audit receipt so a later mismatch is provable, shown to the subject when an ' +
-    'escalation reaches their phone, and REQUIRED by any standing rule the subject marked require_binding before it ' +
+    'this is the action. Recorded on the audit receipt so a later mismatch is provable, shown to the user when an ' +
+    'escalation reaches their phone, and REQUIRED by any standing rule the user marked require_binding before it ' +
     'will auto-proceed.',
   );
 
@@ -348,7 +359,7 @@ server.registerTool(
     title: 'Check standing authorizations for an action',
     description:
       "Deterministic pre-flight: check whether one of the user's standing authorizations " +
-      '(§10.5) already decides this action — escalate, decline, or pre-approve — without running ' +
+      'already decides this action — escalate, decline, or pre-approve — without running ' +
       'the full consultation. Returns authorization_matched plus the authorized signal and the ' +
       'rule that fired. If no rule matches, fall back to phaedo_consult or your own default.',
     inputSchema: {
@@ -666,10 +677,10 @@ server.registerTool(
   {
     title: 'Ask the subject to sign a payment authorization (AP2 Intent Mandate)',
     description:
-      'Request the subject\'s cryptographic signature on an AP2 Intent Mandate built from their ' +
+      'Request the user\'s cryptographic signature on an AP2 Intent Mandate built from their ' +
       'standing authorizations — a credential a merchant or payments network can verify. Returns a ' +
       'request_id and the unsigned mandate immediately; then poll phaedo_sign_status with BOTH, and ' +
-      'DO NOT treat the mandate as authorized until it returns signed. The subject signs on their ' +
+      'DO NOT treat the mandate as authorized until it returns signed. The user signs on their ' +
       'phone (Face ID, key in the Secure Enclave); they may also decline. Use only when you need a ' +
       'verifiable payment credential — not for ordinary consultations.',
     inputSchema: {
@@ -719,7 +730,7 @@ server.registerTool(
             mandate,
             message: 'Sent to the subject to sign. Poll phaedo_sign_status with this request_id AND this ' +
                      'mandate; do not treat it as authorized until it returns signed. If it expires or the ' +
-                     'subject declines, the mandate stays an unsigned proposal.',
+                     'user declines, the mandate stays an unsigned proposal.',
           }
         : {
             request_type: 'sign_mandate', status: 'unreachable', reason: dep.reason,
@@ -745,9 +756,9 @@ server.registerTool(
     title: 'Check whether the subject has signed the mandate',
     description:
       'Poll a request from phaedo_sign_mandate. Pass the request_id AND the mandate that call returned. ' +
-      'Returns signed + the mandate carrying the verified signature once the subject signs, refused if ' +
+      'Returns signed + the mandate carrying the verified signature once the user signs, refused if ' +
       'they declined, pending while you should keep waiting, or expired once the window lapsed. A signed ' +
-      'result is verified against the subject\'s published signing key before it is returned.',
+      'result is verified against the user\'s published signing key before it is returned.',
     inputSchema: {
       request_id: z.string(),
       mandate: z.record(z.any()),

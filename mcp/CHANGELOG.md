@@ -1,6 +1,23 @@
 # Changelog — phaedo-mcp
 
-## 0.3.1 — unreleased
+## 0.3.2 — unreleased
+
+### Described as what it is now
+
+- **The server now tells AI apps how to use it** (MCP server `instructions`): load the profile
+  at the start of a session, consult before a consequential action, escalate when acting alone,
+  record what the user chose, and say plainly once when there is no profile. Until now an app
+  saw eight tool descriptions and nothing about their order.
+- **npm and MCP registry descriptions in plain words**, covering every surface: matching your
+  style, checking before acting, phone approvals, and Face ID-signed purchase approvals. The npm
+  text says the phone app is needed and how to try the example. npm keywords now include
+  `claude`, `claude-code`, `cursor`, `human-in-the-loop`, `approval`, `guardrails`, `ap2`.
+- Tool descriptions say "the user" throughout (the signing tools said "the subject"), and
+  `phaedo_check_authorization` no longer cites a spec section number.
+- README: "No conversation capture" contradicted the opt-in capture hooks documented further
+  down; it now says what is captured, when, and only if you turn it on.
+
+## 0.3.1 — 2026-10-20
 
 ### A fresh install says it has no profile — it no longer borrows a made-up one
 
