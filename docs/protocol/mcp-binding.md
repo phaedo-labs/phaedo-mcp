@@ -92,8 +92,9 @@ no layer content crosses (§10.4).
 Beyond consult-time, the reference server also **promotes** an established override
 pattern into a portable rule: after a consultation it best-effort deposits a delegation
 SUGGESTION (never an authored rule) into the relay's `agent_to_ext` sync-mailbox lane
-(Proposal 0008), encrypted under the shared `fp_sync_key`, for the extension to review and
-the subject to endorse. This is a reference-implementation transport, not an MCP surface —
+(Proposal 0008), encrypted under the server's OWN `fp_sync_key` (it pairs with the vault
+device directly, as its own client), which the vault device opens and forwards to the
+extension for the subject to review and endorse. This is a reference-implementation transport, not an MCP surface —
 it carries no new tool or response shape, and the §10.4 boundary is unchanged (ciphertext
 only; the relay never sees content).
 

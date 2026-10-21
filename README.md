@@ -35,12 +35,13 @@ npm install -g phaedo-mcp
 cd "$(npm root -g)/phaedo-mcp" && npm run setup
 ```
 
-Out of the box it serves a sample fingerprint, so every tool works immediately.
-Your *real* fingerprint comes from the Phaedo app — currently in **private beta**
-([phaedo.so](https://phaedo.so)) — learned on-device from your actual
-usage; pair with `npm run pair`. See
-[`mcp/README.md`](mcp/README.md) for the full guide (pairing, policies, receipts,
-the agreement metric).
+Your fingerprint comes from the Phaedo phone app, learned on-device from your
+actual usage. The app isn't open to the public yet
+([phaedo.so](https://phaedo.so) has a link to hear when it is). Until you pair
+it, the server says plainly that there is no profile; it does not guess. To try
+it with a made-up example profile, set `PHAEDO_FINGERPRINT=sample`. See
+[`mcp/README.md`](mcp/README.md) for the full guide (trying the example,
+pairing, policies, receipts, the agreement metric).
 
 ## Design commitments
 

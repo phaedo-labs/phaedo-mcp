@@ -1,14 +1,98 @@
 # Phaedo MCP server (`phaedo-mcp`)
 
-A local [MCP](https://modelcontextprotocol.io) server that brings your Phaedo
-cognitive fingerprint to any MCP client (Claude Desktop, Claude Code, Cursor,
-agent frameworks) — no Chrome extension needed. It injects your fingerprint
-**projection** so the assistant responds in your style, and adds **consultation**
-(decision/risk signals), **real-time escalation** to your paired phone for a live
-approve / deny / modify on a blocking decision, and **act-as-me** learning from
-your outcome marks. One integration, every MCP client.
+Phaedo learns how you write, work and decide, and keeps that profile on your phone.
+This server lets your AI apps use it: Claude Desktop, Claude Code, Cursor, and any
+other app that supports [MCP](https://modelcontextprotocol.io). With it, they can:
 
-Implements `docs/protocol/mcp-binding.md` §3.1:
+- **Answer the way you like** — your preferred length, tone and format, without
+  you repeating it in every chat.
+- **Check with you before acting** — an AI agent asks Phaedo whether you'd want it
+  to go ahead. When it's unsure, your phone gets an approve / deny card.
+- **Learn from your answers** — each approve or deny teaches it how you want work
+  handled when you're not watching.
+- **Get your signature for purchases** — you sign a spending permission on your
+  phone with Face ID; the agent never holds the key.
+
+Your profile comes from your phone encrypted. The copy kept on this computer, for
+when your phone is offline, is encrypted too.
+
+## What you need
+
+1. **The Phaedo phone app.** Your profile lives there. The app isn't open to the
+   public yet — [phaedo.so](https://phaedo.so) has a link to hear when it is.
+2. **Node.js**, free from [nodejs.org](https://nodejs.org) (the LTS button).
+
+Without the phone app there is no profile, and the server says so plainly rather
+than guessing. You can still try Phaedo with a made-up example profile.
+
+## Try it with the example profile (no phone needed)
+
+This loads a made-up person's profile, so you can see what Phaedo adds before you
+have your own.
+
+**Claude Code** — run this in Terminal (it applies to all your projects):
+
+```bash
+claude mcp add -s user phaedo -e PHAEDO_FINGERPRINT=sample -- npx -y phaedo-mcp
+```
+
+**Claude Desktop** — open Settings → Developer → Edit Config, add the `phaedo`
+entry below inside `mcpServers`, save, then quit and reopen Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "phaedo": {
+      "command": "npx",
+      "args": ["-y", "phaedo-mcp"],
+      "env": { "PHAEDO_FINGERPRINT": "sample" }
+    }
+  }
+}
+```
+
+If Claude Desktop reports that the server failed to start, it couldn't find
+`npx`. Replace `"npx"` with the full path that this prints:
+
+```bash
+which npx
+```
+
+Then start a new chat and ask: *"Load my Phaedo profile."* To stop using the
+example, delete the `env` line in Claude Desktop, or in Claude Code run
+`claude mcp remove -s user phaedo` and add it again without `-e …`. The server
+will then tell you there's no profile until you pair your phone.
+
+## Use your own profile (with the phone app)
+
+1. **Get this folder.** On [the GitHub page](https://github.com/phaedo-labs/phaedo-mcp),
+   click **Code → Download ZIP**, unzip it, and open the `mcp` folder inside.
+2. **Run the installer.**
+   - macOS: double-click **`installers/macos/Install Phaedo MCP.command`**. If macOS
+     says it can't be opened, right-click it and choose **Open**.
+   - Windows: double-click **`installers/windows/Install Phaedo MCP.bat`**.
+   - Linux: run `bash installers/linux/install-phaedo-mcp.sh`.
+
+   It adds Phaedo to Claude Desktop, Cursor and Claude Code — keeping your other
+   settings, and backing each file up first — then starts pairing.
+3. **Pair with your phone.** Open Phaedo on your phone. On the same Wi-Fi, approve
+   **"Phaedo MCP Server"** and check that the code matches the one in Terminal.
+   On a different network, tap **Pair with code** and type the code Terminal shows.
+4. **Quit and reopen your AI apps**, start a new chat, and ask: *"Load my Phaedo
+   profile."*
+
+You can disconnect this computer at any time from the **Agents** screen on your
+phone.
+
+---
+
+## Reference
+
+Everything below is for developers: the full tool list, how the profile is
+loaded, and the test suite.
+
+The server implements the MCP binding of the Anamnesis protocol
+(`docs/protocol/mcp-binding.md` §3.1):
 
 | Surface | Name | Returns |
 |---|---|---|
@@ -129,9 +213,13 @@ foregrounded/reachable at the configured `endpoint`. *(You can still hand-copy
 `pairing.sample.json` → `pairing.json` from the extension's `phaedo_local_pairing`
 if you prefer.)*
 
-**Phase 1a — local JSON (fallback / demo).** With no pairing record, reads a
-**vault payload** from `PHAEDO_FINGERPRINT`, then `mcp/fingerprint.json`, then
-the shipped `mcp/sample-fingerprint.json` (so it runs out of the box):
+**Phase 1a — local JSON.** With no pairing record, reads a **vault payload**
+from `PHAEDO_FINGERPRINT` (a path, or the word `sample` for the shipped
+`mcp/sample-fingerprint.json`), then `mcp/fingerprint.json`. With neither, there
+is **no profile**: every tool returns a plain-language `decryption_failed` error
+saying so. The sample is never served unless asked for by name — until 0.3.1 it
+was the silent fallback, so a fresh `npx phaedo-mcp` injected a made-up person's
+style without saying so. The file looks like this:
 ```json
 {
   "phaedo_fingerprint": { "layers": { ... }, "fingerprint_id": "...", "persona_strength": 0.6 },
@@ -223,6 +311,35 @@ detectors, and a model call can never break or stall a session (30s budget, hook
 exits 0). Prefer the `setup:capture-model` config file over an env var — the file reaches
 Dock-launched Claude Desktop, a shell `export` does not.
 
+### Consult before shipping, from Claude Code (`hooks/pre-ship.mjs`)
+
+`npm run setup:code-hook` also installs a **ship hook** on Bash (PreToolUse,
+PermissionRequest, PostToolUse, PostToolUseFailure). Before an agent merges a PR
+(`gh pr merge`), deploys (`fly deploy`), builds or submits a phone app (`eas build` /
+`eas submit`) or pushes straight to `main`, the hook runs a full `phaedo_consult` on it
+(`ship-actions.js` names these; every other command is ignored in ~50 ms) and writes a
+§10.6 receipt, `agent_id: claude-code/ship-hook`.
+
+- **It only ever adds friction.** It never returns `allow`. A permissive answer leaves
+  Claude Code's own permission flow untouched; `escalate` / `clarify` / `decline` returns
+  `ask`, so the action comes to you with one plain line saying why.
+- **Outcomes are yours, never inferred.** The hook records `approved` only when it has
+  evidence you were asked: Claude Code fired PermissionRequest for that command, and the
+  command then ran. That holds in every mode except auto / dontAsk, where no person
+  answers. Decline and the agent records `rejected` (Claude Code fires no hook for a
+  decline). No prompt shown, nothing recorded; the agent is told so, and records your
+  reaction only if you give one.
+- **What a merge changes.** Before `gh pr merge` the hook reads the PR from GitHub (read-only):
+  failing or unfinished checks, a large diff (> 1,000 code lines or > 20 files), or a sensitive
+  path (CI/deploy config, auth/crypto/secrets by name, or your repo's `.phaedo-sensitive` list,
+  read from the base branch) make it high-stakes. It can raise the stakes, never lower them.
+- **Stale profile.** It reads the at-rest profile cache (so it never pings your phone);
+  when that copy is over 14 days old the agent tells you once a day, with the refresh:
+  `npm run pull` and approve on the phone.
+- **See what it has done:** `npm run ship-readout` (`-- --days 90` to widen).
+- **Fail-safe:** any error, timeout (12 s) or unusable profile → no output, the command
+  runs as if the hook weren't there.
+
 ## Consult at decision points (`phaedo_consult`, §10)
 
 Beyond injecting style, an agent can **ask the fingerprint how the user's pattern
@@ -296,16 +413,20 @@ returns a §10.3 signal. Any failure/timeout/parse error **falls back to the rul
 engine**, so the model can only improve on, never break, the floor (and a missing
 model never breaks consultation). The §10.4 boundary is enforced on parse.
 
-The **installer turns this on automatically**: it probes local Ollama and writes
-`PHAEDO_CONSULT_MODEL` into each client's server entry (picking an installed general
-model, else defaulting to `llama3.1:8b`). Toggle it at install time:
+The judge is **off by default** — the rule engine answers. Measured 2026-10-18 against
+one cached profile, `llama3.1:8b` answered a $12k irreversible payment `clarify 0.9` on
+one run and `proceed_with_note 0.9` on the next, where the rules say `clarify` every
+time. Opt in at install time once a model has earned it:
 
 ```bash
-npm run setup                              # model judge ON (auto-detect Ollama)
-node install.mjs --consult-model qwen2.5:7b   # pin a specific model
+npm run setup                              # model judge OFF (rule engine) — the default
+node install.mjs --model-judge             # ON, auto-detect a local Ollama chat model
+node install.mjs --consult-model qwen2.5:7b   # ON, pinned
 node install.mjs --consult-url http://localhost:11434   # custom endpoint
-node install.mjs --no-model-judge          # rule engine only
 ```
+
+Auto-detect prefers `llama3.1:8b` when installed and never picks an extraction
+fine-tune or an embedding model (`nomic-embed-text` cannot answer a chat prompt).
 
 Use a **general** chat model (NOT the extraction fine-tune). To run it: `ollama
 pull llama3.1:8b`. Raw env (if configuring a client by hand):

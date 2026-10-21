@@ -14,6 +14,8 @@
 // edit the proposed text before endorsing, so `proposed_text` only needs to be a
 // reasonable starting sentence.
 
+import '../trait-phrases.js';   // UMD side-effect import → globalThis.PhaedoTraitPhrases
+
 export const PROMOTION_FLOOR = 3;                       // §4.7 RESOLUTION_FLOOR — same "established" bar
 const PROMOTABLE_TIERS = new Set(['observed', 'corroborated']); // never promote a self_reported guess
 const DR_LAYER = 'decision_and_risk';
@@ -24,47 +26,11 @@ const uuid = () =>
 
 const keyOf = (dim, val) => `${dim}::${JSON.stringify(val ?? null)}`;
 
-// (dimension, value) → a first-person candidate. Unknown pairs fall back to a
-// generic sentence; the subject edits before endorsing either way.
-const TEMPLATES = {
-  evidence_threshold: { high: 'I want the main risks covered and the key facts nailed down before I commit.' },
-  ambiguity_posture:  { ask: 'When a request is ambiguous, I ask one clarifying question before acting.',
-                        default: 'When things are ambiguous I stay decisive and commit rather than hedge.',
-                        delay: 'When things are ambiguous I would rather wait than commit prematurely.' },
-  speed_vs_quality:   { quality: 'I trade speed for accuracy on work that matters.',
-                        accuracy: 'I trade speed for accuracy on work that matters.',
-                        speed: 'I favor moving fast and accept rough edges when speed matters.' },
-  reversible_vs_irreversible: { more_cautious: "On decisions I can't easily undo, I slow down and seek more input.",
-                        consistent_style: 'I bring the same care to a decision whether or not it can be undone.' },
-  options_vs_recommendation: { single_recommendation: 'Give me a single clear recommendation, not a menu of options.',
-                        option_set: 'I prefer to see a set of options and make the call myself.' },
-  // Surface (response/style) — the dimensions auto-overrides surface against.
-  response_length_pref: { short: 'Default to concise — keep responses tight.',
-                        thorough: 'Default to thorough responses; go deep and cover the edge cases.',
-                        medium: 'Default to medium-length responses — neither terse nor exhaustive.' },
-  tone_register:       { casual: 'Default to a casual, conversational tone.',
-                        formal: 'Default to a formal, professional tone.' },
-};
-const DIM_LABEL = {
-  evidence_threshold: 'how much evidence I need before committing',
-  ambiguity_posture: 'how I handle ambiguity',
-  speed_vs_quality: 'how I weigh speed against quality',
-  reversible_vs_irreversible: 'how I treat irreversible decisions',
-  options_vs_recommendation: 'whether I want options or a single call',
-  response_length_pref: 'response length',
-  tone_register: 'tone',
-  directness: 'directness',
-  jargon_tolerance: 'jargon level',
-  formatting_prefs: 'formatting',
-  autonomy_pref: 'how much autonomy I give the assistant',
-  reasoning_visibility: 'whether I want the reasoning shown',
-};
+// (dimension, value) → the candidate sentence, from the shared phrasebook (trait-phrases.js):
+// one written sentence for every trait and value, so a suggestion never reads
+// "I have a consistent way I handle … (0.85)". The subject can still edit before endorsing.
 export function proposeText(dimension, value) {
-  const v = Array.isArray(value) ? value[0] : value;
-  const byDim = TEMPLATES[dimension];
-  if (byDim && v != null && byDim[v]) return byDim[v];
-  const label = DIM_LABEL[dimension] || dimension;
-  return v != null ? `I have a consistent way I handle ${label} (${v}).` : `I have a consistent way I handle ${label}.`;
+  return globalThis.PhaedoTraitPhrases.phrase(dimension, value);
 }
 
 function endorsedDimensions(fp) {

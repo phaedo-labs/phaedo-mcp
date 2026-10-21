@@ -261,7 +261,7 @@ if (process.argv[1] && process.argv[1].endsWith('receipts.js')) {
       for (const r of rs.slice(-50)) {
         const ad = r.request.action_descriptor;
         console.log(
-          `${r.receipt_id.slice(0, 8)}  ${r.created_at}  ${r.via === 'phaedo_check_authorization' ? '[pre-flight]' : '[consult]  '}` +
+          `${r.receipt_id.slice(0, 8)}  ${r.created_at}  ${r.via === 'phaedo_check_authorization' ? '[pre-flight]' : r.agent_id === 'claude-code/ship-hook' ? '[ship-hook] ' : '[consult]  '}` +
           ` ${r.request.consultation_type}  ${ad.domain || '-'}` +
           `  → ${r.response.signal} (conf ${r.response.confidence}, def ${r.response.deference_level})` +
           `  user_action: ${r.user_action ?? '—'}`

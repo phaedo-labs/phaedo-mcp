@@ -35,14 +35,14 @@ export const CORRECTION_PATTERNS = [
   // Surface — tone
   { pattern: /\b(too formal|less formal|more casual|relax the tone|conversational(ly)?|informal)\b/i,                                     layer: 'surface',        signal: 'prefers_casual' },
   { pattern: /\b(too casual|more formal|professional(ly)?|keep it formal)\b/i,                                                            layer: 'surface',        signal: 'prefers_formal' },
-  { pattern: /\b(too roundabout|get to the point|be direct|skip the preamble|lead with|bottom.?line (up )?front)\b/i,                    layer: 'surface',        signal: 'more_direct' },
+  { pattern: /\b(too roundabout|get to the point|be (more )?direct|skip the preamble|lead with|bottom.?line (up )?front)\b/i,                    layer: 'surface',        signal: 'more_direct' },
   { pattern: /\b(no (intro|preamble|opener)|skip the intro|don'?t start with|cut the opener|dive right in)\b/i,                          layer: 'surface',        signal: 'no_preamble' },
   { pattern: /\b(no examples?|skip the examples?|I don'?t need examples?|without examples?)\b/i,                                         layer: 'surface',        signal: 'no_examples' },
   { pattern: /\b(give me an example|show me an example|illustrate|for example|can you show|concrete example)\b/i,                         layer: 'surface',        signal: 'wants_examples' },
   { pattern: /\b(simpler words?|plain(er)? (language|english)|avoid jargon|less jargon|plain terms?)\b/i,                                layer: 'surface',        signal: 'plainer_language' },
 
   // Behavioral — autonomy and initiative
-  { pattern: /\b(just do it|stop asking|don'?t (ask|check)|fewer questions?|just (go|start|write|build|do)|no need to ask)\b/i,          layer: 'behavioral',     signal: 'fewer_questions' },
+  { pattern: /\b(just do it|stop asking|don'?t (ask|check)|fewer questions?|just (go ahead|start|write it|build it|do it)|no need to ask)\b/i,          layer: 'behavioral',     signal: 'fewer_questions' },
   { pattern: /\b(ask (me )?first|confirm before|check (with me|before)|get my (input|approval)|don'?t assume)\b/i,                        layer: 'behavioral',     signal: 'wants_confirmation' },
   { pattern: /\b(show your (work|reasoning)|explain your reasoning|walk me through|how (did you|do you) (get|arrive))\b/i,                layer: 'behavioral',     signal: 'show_reasoning' },
   { pattern: /\b(just (give me|the) (answer|result)|skip the explanation|don'?t explain (how|why)|bottom line only)\b/i,                 layer: 'behavioral',     signal: 'skip_reasoning' },
@@ -86,7 +86,7 @@ export const CORRECTION_PATTERNS = [
   { pattern: /\b(ballpark (is fine|estimate|answer)|rough estimate|in the ballpark|order of magnitude|approximate(ly)?( is fine)?)\b/i,  layer: 'decision_and_risk',       signal: 'rough_estimate_ok' },
 
   // Creative — style and originality
-  { pattern: /\b(too conventional|be (more )?creative|unexpected (approach|angle|idea)|think (differently|outside)|original)\b/i,        layer: 'creative',       signal: 'wants_creative' },
+  { pattern: /\b(too conventional|be (more )?creative|unexpected (approach|angle|idea)|think (differently|outside))\b/i,        layer: 'creative',       signal: 'wants_creative' },
   { pattern: /\b(simpler|more elegant|too complex|less is more|strip (it )?down|over.?engineered|over.?complicated)\b/i,                 layer: 'creative',       signal: 'wants_elegance' },
   { pattern: /\b(standard (approach|solution)|conventional|don'?t overthink|keep it (simple|straightforward|standard))\b/i,              layer: 'creative',       signal: 'wants_conventional' },
   { pattern: /\b(more original|surprise me|not the obvious|unconventional|different (angle|approach|way)|unexpected)\b/i,                layer: 'creative',       signal: 'wants_originality' },
@@ -95,7 +95,7 @@ export const CORRECTION_PATTERNS = [
   { pattern: /\b(don'?t explain what you'?re doing|just do it|skip the (meta|commentary|preamble)|no meta)\b/i,                          layer: 'big_picture',           signal: 'skip_meta' },
   { pattern: /\b(show your reasoning|think out loud|walk me through your (logic|thinking|approach)|what'?s your (plan|approach|thinking))\b/i, layer: 'big_picture',    signal: 'show_meta' },
   { pattern: /\b(what (assumptions?|are you assuming)|be transparent|tell me your reasoning|what'?s your (basis|rationale))\b/i,         layer: 'big_picture',           signal: 'wants_transparency' },
-  { pattern: /\b(commit|stop second.?guessing|be confident|don'?t hedge|pick and go|just (pick|commit|decide))\b/i,                      layer: 'big_picture',           signal: 'less_second_guessing' },
+  { pattern: /\b(commit to (it|one|a decision|an answer)|stop second.?guessing|be confident|don'?t hedge|pick and go|just (pick|commit|decide))\b/i,                      layer: 'big_picture',           signal: 'less_second_guessing' },
 ];
 
 // Positive reinforcement — mirror of content.js

@@ -20,7 +20,8 @@
 // The raw transcript is read, counted, and DISCARDED — nothing derived from it
 // but signal names + integers is ever persisted or transmitted (the discard-raw
 // contract). Wire it up with `npm run setup:code-hook` (installs SessionStart
-// injection + this SessionEnd capture together), or by hand in
+// injection + this SessionEnd capture + the throttled Stop capture in
+// stop-capture.mjs, which re-runs this file for sessions that stay open), or by hand in
 // ~/.claude/settings.json:
 //   { "hooks": { "SessionEnd": [ { "hooks": [
 //       { "type": "command", "command": "<node> <abs path to this file>" }
@@ -228,9 +229,12 @@ if (isMain) {
     process.stdin.on('end', () => res(data));
     process.stdin.on('error', () => res(''));
   });
+  // Input comes on stdin from Claude Code (SessionEnd), or in PHAEDO_CAPTURE_INPUT when
+  // the Stop hook (stop-capture.mjs) launches this file detached for an open session.
   const run = async () => {
     let input = {};
-    try { input = JSON.parse(await readStdin()); } catch { /* no/bad input → no-op */ }
+    const handed = process.env.PHAEDO_CAPTURE_INPUT;
+    try { input = JSON.parse(handed !== undefined ? handed : await readStdin()); } catch { /* no/bad input → no-op */ }
     await runCaptureHook(input);
   };
   const timeout = new Promise((res) => setTimeout(res, BUDGET_MS));

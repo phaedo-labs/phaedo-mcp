@@ -163,7 +163,12 @@ async function getSession(rec, deps) {
 // (consult-policy loadPolicies / context-block renderContextBlock); absent —
 // pre-part-3 phone — consumers fall back to the fingerprint A-home unchanged.
 export function toVaultPayload(inner) {
-  const m = inner.metrics || {};
+  // Prefer every paired browser's counters combined (`metrics_combined`, 2026-10-01): the subject
+  // is one person across browsers, and `metrics` is only the browser that posted last. A phone
+  // that predates the sibling sends only `metrics`, which still serves.
+  const m = (inner.metrics_combined && typeof inner.metrics_combined === 'object' && !Array.isArray(inner.metrics_combined))
+    ? inner.metrics_combined
+    : (inner.metrics || {});
   return {
     phaedo_fingerprint: inner.data,
     ...(inner.user_configuration && typeof inner.user_configuration === 'object'

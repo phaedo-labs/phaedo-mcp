@@ -60,6 +60,21 @@ ok(tampered !== null, 'wrong pair_key is rejected (authorize fails)');
   ok(!('phaedo_user_configuration' in toVaultPayload({ data: {}, user_configuration: 'junk', metrics: {} })), 'non-object sibling is dropped, not forwarded');
 }
 
+// ── metrics_combined (2026-10-01): every paired browser's counters, preferred over `metrics` ──
+// `metrics` is the blob from whichever browser posted LAST; the agent should render the style of
+// the whole person across browsers. A phone that predates the sibling still serves `metrics`.
+{
+  const last = { signals: { surface: { too_long: 1 } }, ling: { messageCount: 3 }, sessions: { sessionCount: 1 } };
+  const all  = { signals: { surface: { too_long: 7 } }, ling: { messageCount: 243, causalRate: 0.08 }, sessions: { sessionCount: 41 } };
+  const both = toVaultPayload({ data: {}, metrics: last, metrics_combined: all });
+  ok(both.phaedo_linguistic_profile.messageCount === 243 && both.phaedo_behavioral_signals.surface.too_long === 7
+    && both.phaedo_session_metrics.sessionCount === 41, 'metrics_combined is preferred when the phone sends it');
+  const old = toVaultPayload({ data: {}, metrics: last });
+  ok(old.phaedo_linguistic_profile.messageCount === 3, 'an older phone (no sibling) still serves the last-posted blob');
+  ok(toVaultPayload({ data: {}, metrics: last, metrics_combined: [1, 2] }).phaedo_linguistic_profile.messageCount === 3,
+    'a non-object sibling is ignored, never trusted');
+}
+
 // ── §8.3 signing public key: a sibling, carried through, never trusted from `data` ────
 {
   const key = 'BFj7q2exampleX963pointbase64';

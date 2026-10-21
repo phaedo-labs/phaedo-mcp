@@ -16,8 +16,8 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
-import { loadFingerprint, loadFingerprintPreferCache, sourceOf } from './fingerprint-source.js';
-import { hasPairingRecord, loadPairingRecord, readServingClientId } from './phone-source.js';
+import { loadFingerprint, sourceOf } from './fingerprint-source.js';
+import { hasPairingRecord, loadPairingRecord } from './phone-source.js';
 import { depositDelegationSuggestions } from './delegation-sync.js';
 import { depositReceiptsDigest, drainAndApplyMarks } from './receipts-sync.js';
 import { buildDelegationPromotions } from './consult-core.js';
@@ -27,8 +27,9 @@ import { buildIntentMandatePayload } from './ap2.js';
 import { depositSignRequest, pollSignOnce } from './signing-request.js';
 import { buildSigningAuditRecord, appendSigningAudit } from './signing-audit.js';
 import { buildInjectionResponse, errorResponse, PhaedoError } from './projection.js';
-import { resolveConsultation, checkAuthorization, consultOptsFromEnv, CONSULTATION_TYPES, consultDrivers, deriveDelegationSignals, withDelegationSignals, authoredDelegationSignals } from './consult.js';
+import { resolveConsultation, checkAuthorization, CONSULTATION_TYPES, consultDrivers, withRevision } from './consult.js';
 import { defaultStateDir } from './cache.js';
+import { buildConsultOpts, loadConsultVd } from './consult-runtime.js';
 import { buildReceipt, appendReceipt, receiptsCapFromEnv, readReceipts, markOutcome, USER_ACTIONS } from './receipts.js';
 
 const BASE_DIR = dirname(fileURLToPath(import.meta.url));
@@ -86,28 +87,6 @@ function withStaleAuthorityGuard(response, vd) {
     `subject's profile${hours != null ? ` about ${hours}h old` : ''} because their device could not be reached. ` +
     `A pre-approval that may since have been revoked must not be acted on unattended — ask the subject.`;
   return out;
-}
-
-// Load the fingerprint for a consult and fold in the act-as-me channel: delegation
-// signals derived from this subject's own override history (§10.6 receipts). The
-// origin-aware resolver then lets a `delegation` correction outrank a `self` signal on
-// the same dimension. Best-effort — if receipts are unreadable, the consult still
-// answers from the plain fingerprint (delegation learning never breaks a consultation).
-async function loadConsultVd(baseDir, { preferCache = false } = {}) {
-  // preferCache (escalation): read the at-rest cache instead of a live phone pull, so the
-  // escalation doesn't add a fingerprint-read AUTHORIZE prompt on top of its decision card.
-  const vd = preferCache ? await loadFingerprintPreferCache(baseDir) : await loadFingerprint(baseDir);
-  try {
-    // Two delegation sources, both origin-aware: live override history (every override)
-    // + the subject's ENDORSED, portable delegation rules (authored_delegation). The
-    // authored rule thus shapes consult too, not only the §9 injection it already renders in.
-    const signals = deriveDelegationSignals(await readReceipts(defaultStateDir()))
-      .concat(authoredDelegationSignals(vd && vd.phaedo_fingerprint));
-    return withDelegationSignals(vd, signals);
-  } catch (e) {
-    process.stderr.write(`[phaedo-mcp] delegation derive skipped (consult unaffected): ${e.message}\n`);
-    return vd;
-  }
 }
 
 // Act-as-me PROMOTION (delegation-sync.js): when the override history shows an
@@ -184,7 +163,9 @@ async function maybeDepositDelegationPromotions(vd) {
   }
 }
 
-const CONSULT_OPTS = consultOptsFromEnv(process.env);
+// Env config + the subject's deference policies + this install's paired-client id —
+// built in consult-runtime.js, the one copy the Claude Code ship hook shares.
+const CONSULT_OPTS = buildConsultOpts(BASE_DIR, process.env);
 // Real-time escalation window (docs/roadmap/escalation-and-push.md §crux): how long a
 // blocking decision waits for the subject before the agent applies the safe-default
 // (hold). Configurable; bounded by the relay's own MAX_WINDOW_MS.
@@ -192,20 +173,6 @@ const ESCALATION_WINDOW_MS = (() => {
   const n = Number(process.env.PHAEDO_ESCALATION_WINDOW_MS);
   return Number.isFinite(n) && n > 0 ? n : 3 * 60 * 1000;
 })();
-// Deference policies: PHAEDO_CONSULT_POLICIES if set, else the default file beside
-// the server (mcp/consult-policies.json — what policy-editor.html produces). Zero
-// config: drop the file in and restart the client. (Portable vault policies in
-// phaedo_consult_policies always apply too, regardless of this file.)
-const POLICIES_PATH = process.env.PHAEDO_CONSULT_POLICIES || join(BASE_DIR, 'consult-policies.json');
-if (existsSync(POLICIES_PATH)) {
-  try { CONSULT_OPTS.policies = JSON.parse(readFileSync(POLICIES_PATH, 'utf8')); }
-  catch (e) { process.stderr.write(`[phaedo-mcp] ignoring malformed consult policies (${POLICIES_PATH}): ${e.message}\n`); }
-}
-// §10.5 `agents`: this process's OWN paired-client identity, resolved once at startup.
-// One server serves one paired client, so it never asks a caller who is calling — it
-// reads who it IS. Null (unpaired / unreadable) makes `agents`-scoped RELAXING rules
-// inert, which is the fail-safe direction; the server still answers everything else.
-CONSULT_OPTS.clientId = readServingClientId(BASE_DIR);
 
 // Escalation PUSH policy (which signals wake the subject): the subject-configurable knob
 // over the stakes-gated default. Local file (PHAEDO_ESCALATION_POLICY, else
@@ -299,9 +266,18 @@ server.registerTool(
   {
     title: 'Consult the Phaedo fingerprint at a decision point',
     description:
-      "Ask how the user's cognitive pattern bears on a decision — without ingesting the fingerprint. " +
-      'Returns a signal (proceed | proceed_with_note | clarify | escalate | decline), a confidence, a ' +
-      'short rationale_hint, and a deference_level (how strongly to weight it). Use at agent decision points.',
+      // Names the MOMENTS. "Use at agent decision points" told no agent when it was at one: not
+      // one consultation was written between 2026-07-28 and 2026-10-18. And it closes the loop —
+      // the receipt_id is the only handle that attributes the user's reaction to THIS action.
+      'Ask how the user would want an action handled, before you take it on their behalf — without ' +
+      'reading their profile. Call it BEFORE any consequential action you are about to take for the ' +
+      'user: merging or deploying, publishing or posting, sending a message, paying or committing money, ' +
+      'deleting, or changing an account or setting. Describe the action in action_descriptor (domain, ' +
+      'reversible, magnitude, a short summary; amount when money moves) and bind it to the exact call ' +
+      'with action_binding. Returns a signal (proceed | proceed_with_note | clarify | escalate | decline | ' +
+      'insufficient_signal), a confidence, a short rationale_hint, a deference_level (how strongly to ' +
+      'weight it) and a receipt_id. Keep the receipt_id: when the user reacts to what you did — confirms ' +
+      'it, overrides it, or wants it done differently — record that with phaedo_record_outcome.',
     inputSchema: {
       consultation_type: z.enum(CONSULTATION_TYPES),
       agent_id: z.string().optional(),
@@ -334,12 +310,12 @@ server.registerTool(
       // the two tools an autonomous agent actually uses answered from a possibly-revoked cached
       // profile with no downgrade and no provenance. That is the 2026-07-25 device defect (a
       // revoked $500 grant honoured from a 22h cache) still live on the paths that matter most.
-      const response = withStaleAuthorityGuard(
-        await resolveConsultation(vd, args || {}, CONSULT_OPTS), vd);
+      const raw = await resolveConsultation(vd, args || {}, CONSULT_OPTS);
+      const response = withStaleAuthorityGuard(raw, vd);
       // Provenance for the local audit receipt only — the cues that drove this
       // (never in `response`; §10.4). Best-effort: a failure must not block the answer.
       let drivers = [];
-      try { drivers = consultDrivers(vd, args || {}); } catch { /* provenance is non-critical */ }
+      try { drivers = withRevision(consultDrivers(vd, args || {}, CONSULT_OPTS), raw); } catch { /* provenance is non-critical */ }
       const receiptId = await emitReceipt('phaedo_consult', args, response, drivers); // every resolution, abstains included
       if (receiptId) response.receipt_id = receiptId;   // the handle for phaedo_record_outcome
       await maybeDepositDelegationPromotions(vd);                    // act-as-me promotion (best-effort)
@@ -450,10 +426,13 @@ server.registerTool(
   {
     title: 'Record what the subject decided about a consulted action',
     description:
-      'After you consulted Phaedo and the USER decided what to do, record their outcome on the receipt: ' +
-      'approved | rejected | modified | unknown. Record what the USER chose, NOT whether you proceeded. ' +
-      'A rejected/modified outcome teaches Phaedo how the user wants delegated work handled (the act-as-me ' +
-      'channel). Defaults to the most recent receipt; pass receipt_id to mark a specific one.',
+      'Record what the USER decided about an action you consulted Phaedo on: approved | rejected | ' +
+      'modified | unknown. Call it when the user reacts to that action — they confirm it (approved), ' +
+      'refuse or undo it (rejected), or want it done differently (modified). Always pass the receipt_id ' +
+      'that phaedo_consult (or a Phaedo hook) gave you; without it the most recent receipt is marked, ' +
+      'which may be a different action. Record what the user chose, never whether you proceeded: ' +
+      'silence is not approval, and an approval you inferred teaches nothing. A rejected/modified ' +
+      'outcome teaches Phaedo how the user wants delegated work handled (the act-as-me channel).',
     inputSchema: {
       outcome: z.enum(USER_ACTIONS),
       receipt_id: z.string().optional(),
@@ -547,10 +526,10 @@ server.registerTool(
       // UNCONDITIONALLY, so without the guard it always reasoned from a possibly-stale profile
       // and then told the agent the signal was not blocking — i.e. "just proceed", and never
       // wake the subject, on authority that may have been revoked hours earlier.
-      const response = withStaleAuthorityGuard(
-        await resolveConsultation(vd, req, CONSULT_OPTS), vd);
+      const raw = await resolveConsultation(vd, req, CONSULT_OPTS);
+      const response = withStaleAuthorityGuard(raw, vd);
       let drivers = [];
-      try { drivers = consultDrivers(vd, req); } catch { /* non-critical */ }
+      try { drivers = withRevision(consultDrivers(vd, req, CONSULT_OPTS), raw); } catch { /* non-critical */ }
       const escReceiptId = await emitReceipt('phaedo_escalate', req, response, drivers);   // the decision being escalated
       await maybeDepositReceiptsDigest();                              // G1+G2 audit channel
 

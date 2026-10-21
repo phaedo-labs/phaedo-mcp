@@ -5,15 +5,17 @@
 //   Phase 1b (phone): if a pairing record is configured (PHAEDO_PAIRING or
 //     mcp/pairing.json), authorize → pull /v1/profile → unwrap the §7.2 envelope
 //     from the paired phone (phone-source.js). Spec-faithful; no plaintext at rest.
-//   Phase 1a (local): otherwise read a local vault-payload JSON (or the shipped
-//     sample) — the decoupled stand-in that runs out of the box.
+//   Phase 1a (local): otherwise read a local vault-payload JSON. With neither, there is
+//     no profile — tools say so (NO_PROFILE_MESSAGE); the shipped sample is opt-in only.
 
 import { readFile } from 'fs/promises';
-import { resolve } from 'path';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { hasPairingRecord, loadPairingRecord, loadFingerprintFromPhone, PhoneError } from './phone-source.js';
 import { defaultStateDir, writeCache, readCache, clearCache } from './cache.js';
 import { foldLocalCapture, isLocalCaptureOwner } from './capture-local.js';
 import { Capabilities, AuthoredSource } from './lib/phaedo-crypto.js';
+import { PhaedoError } from './errors.js';
 
 // §4.1 protocol-identity normalization (consumer defense-in-depth, 2026-06-16).
 // A stored fingerprint from a producer that predates identity stamping (or whose
@@ -74,13 +76,32 @@ export function foldConfigHome(vd) {
 }
 
 // Resolution order for the local fixture (1a):
-//   1. PHAEDO_FINGERPRINT env var (absolute or cwd-relative path)
+//   1. PHAEDO_FINGERPRINT env var (absolute or cwd-relative path, or `sample`)
 //   2. ./fingerprint.json next to the server
-//   3. ./sample-fingerprint.json (shipped demo fixture)
+//   — nothing else. There is deliberately NO silent fallback to the shipped sample.
+//
+// NO PROFILE IS AN ANSWER, NOT A DEMO. Until 2026-10-20 an unpaired install with no file fell
+// back to sample-fingerprint.json — so a stranger who ran `npx phaedo-mcp` had a made-up
+// person's style injected into their assistant, with nothing anywhere saying so (the response
+// carried `fingerprint_id: sample-0000…`, which no human reads). The sample is still one word
+// away for anyone who wants to try it — PHAEDO_FINGERPRINT=sample — but it has to be asked for.
+const SAMPLE_KEYWORD = 'sample';
+// The sample ships beside this module, whatever base dir the caller serves from.
+const SAMPLE_PATH = resolve(dirname(fileURLToPath(import.meta.url)), 'sample-fingerprint.json');
 function resolveSourcePath(baseDir) {
-  if (process.env.PHAEDO_FINGERPRINT) return resolve(process.cwd(), process.env.PHAEDO_FINGERPRINT);
+  const env = process.env.PHAEDO_FINGERPRINT;
+  if (env === SAMPLE_KEYWORD) return SAMPLE_PATH;
+  if (env) return resolve(process.cwd(), env);
   return resolve(baseDir, 'fingerprint.json');
 }
+
+// Read by the assistant (a tool error) and, through it, by the person — so plain words, and
+// it says what did NOT happen as well as what to do.
+export const NO_PROFILE_MESSAGE =
+  'No Phaedo profile is set up on this computer, so there is nothing to load and Phaedo has ' +
+  'not changed how the assistant responds. A profile comes from the Phaedo phone app, which is ' +
+  'not open to the public yet (https://phaedo.so to hear when it is). To try Phaedo with a made-up example profile ' +
+  'instead, set PHAEDO_FINGERPRINT=sample in this server\'s settings.';
 
 // Returns the vault payload:
 //   { phaedo_fingerprint, phaedo_behavioral_signals, phaedo_linguistic_profile,
@@ -154,9 +175,13 @@ export async function loadFingerprint(baseDir) {
   let raw;
   try {
     raw = await readFile(path, 'utf8');
-  } catch {
-    // Fall back to the shipped sample so a fresh checkout runs out of the box.
-    raw = await readFile(resolve(baseDir, 'sample-fingerprint.json'), 'utf8');
+  } catch (err) {
+    // Only the default location may be absent quietly. A path the user NAMED that doesn't
+    // read is their mistake to see, not "no profile".
+    if (!process.env.PHAEDO_FINGERPRINT && err?.code === 'ENOENT') {
+      throw new PhaedoError('decryption_failed', NO_PROFILE_MESSAGE);
+    }
+    throw new PhaedoError('decryption_failed', `Could not read the Phaedo profile at ${path} (${err?.code || err?.message || err}).`);
   }
   const vd = JSON.parse(raw);
   if (!vd || typeof vd !== 'object' || !vd.phaedo_fingerprint) {

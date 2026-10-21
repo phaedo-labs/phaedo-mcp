@@ -77,6 +77,38 @@ export function computeAgreement(receipts, { windowDays = DEFAULT_WINDOW_DAYS, n
   };
 }
 
+// ── Split by resolver revision (precedent track Phase 1b) ─────────────────────
+// Which engine answered a receipt: the `resolverRevision` driver the consult stamped (the
+// rules' RESOLVER_REVISION, or `judge:<model>`). A matched pre-flight is a standing rule
+// answering, not the inferred path. Anything else predates the stamp (2026-10-20) or carried
+// no inferred prediction (an abstain) — "not recorded", never guessed.
+export const NOT_RECORDED = 'not recorded';
+export function revisionOf(r) {
+  const d = Array.isArray(r?.drivers) ? r.drivers.find((x) => x?.cue === 'resolverRevision') : null;
+  if (d && typeof d.value === 'string' && d.value) return d.value;
+  if (r?.via === 'phaedo_check_authorization') return 'standing rule (pre-flight)';
+  return NOT_RECORDED;
+}
+
+/**
+ * (receipts, { windowDays, now }) -> { [revision]: overall-bucket }, so a behaviour change
+ * shows up as two rates instead of one blurred one. Same scoring as computeAgreement.
+ */
+export function computeAgreementByRevision(receipts, { windowDays = DEFAULT_WINDOW_DAYS, now = Date.now() } = {}) {
+  const groups = new Map();
+  for (const r of Array.isArray(receipts) ? receipts : []) {
+    const k = revisionOf(r);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(r);
+  }
+  const out = {};
+  for (const [k, rs] of groups) {
+    const rep = computeAgreement(rs, { windowDays, now });
+    if (rep.window.in_window > 0) out[k] = rep.overall;
+  }
+  return out;
+}
+
 // ── The transportable summary (receipts digest → phone) ───────────────────────
 // `computeAgreement` is the full local report; this is the bounded slice that rides
 // the `agent_to_phone` receipts digest so the subject can see how well their oracle
@@ -119,9 +151,23 @@ export function agreementDigest(receipts, { windowDays = DEFAULT_WINDOW_DAYS, no
 // Decrypts the local receipt store with the local key; nothing leaves the device.
 // NOT product UX and NOT fed back into deference (see header).
 if (process.argv[1] && process.argv[1].endsWith('agreement.js')) {
-  const days = Number(process.argv[2]) || DEFAULT_WINDOW_DAYS;
+  const args = process.argv.slice(2);
+  const byRevision = args.includes('--by-revision');
+  const days = Number(args.find((a) => /^\d+$/.test(a))) || DEFAULT_WINDOW_DAYS;
   Promise.all([import('./receipts.js'), import('./cache.js')]).then(async ([{ readReceipts }, { defaultStateDir }]) => {
-    const report = computeAgreement(await readReceipts(defaultStateDir()), { windowDays: days });
+    const receipts = await readReceipts(defaultStateDir());
+    if (byRevision) {
+      const split = computeAgreementByRevision(receipts, { windowDays: days });
+      console.log(`Agreement by rule-engine version — last ${days}d\n`);
+      const names = Object.keys(split).sort((a, b) => (a === NOT_RECORDED) - (b === NOT_RECORDED) || a.localeCompare(b));
+      if (!names.length) console.log('No receipts in the window.');
+      for (const k of names) {
+        const b = split[k];
+        console.log(`${k.padEnd(34)} rate ${b.rate === null ? '  —  ' : (b.rate * 100).toFixed(1) + '%'}  (${b.agreements}✓ ${b.disagreements}✗ of ${b.scored} scored · ${b.non_directional} non-directional · ${b.awaiting_user_action} awaiting)`);
+      }
+      return;
+    }
+    const report = computeAgreement(receipts, { windowDays: days });
     const { overall: o, window: w } = report;
     console.log(`Agreement over the last ${w.days}d — ${w.in_window}/${w.total_receipts} receipts in window\n`);
     const line = (label, b) =>

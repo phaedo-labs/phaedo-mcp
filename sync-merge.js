@@ -30,6 +30,32 @@
 (function () {
   'use strict';
 
+  // Per-source signal ledgers (signal-ledger.js) — learning from several browsers ADDS UP instead
+  // of the newer copy's layers replacing the other's. popup.html loads it before this file; Node
+  // requires it. Absent (an old page that has not reloaded) → the layers fall back to
+  // last-write-wins exactly as before, never to an error.
+  function _ledger() {
+    if (typeof globalThis !== 'undefined' && globalThis.PhaedoSignalLedger) return globalThis.PhaedoSignalLedger;
+    try { return typeof require === 'function' ? require('./signal-ledger.js') : null; } catch { return null; }
+  }
+
+  /** The inferred layers of `base` with `other`'s attributed evidence folded in. Returns
+   *  `base.layers` itself when there is nothing to add. */
+  //
+  // `summariesFrom` (optional): the copy whose rendered layer summaries win where the signals agree
+  // — on the extension that is its OWN copy, since it renders them (signal-ledger.js
+  // adoptSummaries). Without it a stale summary on the phone read as a change on every popup open.
+  function mergeInferredLayers(base, other, summariesFrom) {
+    const SL = _ledger();
+    if (!SL || !base) return base && base.layers;
+    let layers = (!other || base === other) ? base.layers : SL.mergeLayers(base.layers, other.layers);
+    if (summariesFrom && summariesFrom !== base && typeof SL.adoptSummaries === 'function' &&
+        SL.summaryContextMatches(base, summariesFrom)) {
+      layers = SL.adoptSummaries(layers, summariesFrom.layers);
+    }
+    return layers;
+  }
+
   // Stable serialization (sorted keys) so a pure reordering doesn't read as a change.
   function stable(v) {
     if (Array.isArray(v)) return '[' + v.map(stable).join(',') + ']';
@@ -554,6 +580,13 @@
   function assembleMerged(inferredBase, authoredWinner, authoredLoser, localFp, phoneFp) {
     const out = { ...inferredBase };
 
+    // The inferred base still decides every non-signal field of each layer, but a signal's
+    // EVIDENCE from the other copy is kept (per source), not dropped with the losing copy. With
+    // two browsers paired, dropping it is what erased one browser's learning at every sync.
+    const otherSide = inferredBase === phoneFp ? localFp : phoneFp;
+    const layers = mergeInferredLayers(inferredBase, otherSide);
+    if (layers && layers !== inferredBase.layers) out.layers = layers;
+
     // non-rule answers follow the inferred base; rule answers follow the authored winner
     const answers = {};
     for (const id of Object.keys(inferredBase.answers || {})) {
@@ -601,6 +634,16 @@
     preserveReviewQueues(out, localFp, phoneFp);
 
     preserveLocalStamps(out, localFp);
+
+    // Summaries: THIS browser rendered its own, so where the signals agree its copy wins — but only
+    // when both copies carry the same rules and conflicts, which decide what a summary withholds
+    // (signal-ledger.js summaryContextMatches). Done last, against the final rules.
+    const SL = _ledger();
+    if (SL && typeof SL.adoptSummaries === 'function' && out.layers && localFp && localFp !== inferredBase &&
+        SL.summaryContextMatches(out, localFp)) {
+      const adopted = SL.adoptSummaries(out.layers, localFp.layers);
+      if (adopted !== out.layers) out.layers = adopted;
+    }
 
     return out;
   }
@@ -704,7 +747,7 @@
   // INJECTION seam and must make the same choice this merge does, or the merge keeps the copy
   // carrying an authored exception and the block then discards it. Exported so
   // scripts/test_injection_integrity.mjs can assert that coupling instead of asserting it in prose.
-  const api = { instructionKey, richness, mergeStandingRules, mergeRuleAnswers, reconcileAuthored, mergeFingerprintForLocal, mergeAgentSuggestions, mergeConsultPolicies, consultPolicyKey, mergeCommitments, authoredClock, hasAuthoredContent };
+  const api = { instructionKey, richness, mergeStandingRules, mergeRuleAnswers, reconcileAuthored, mergeFingerprintForLocal, mergeAgentSuggestions, mergeConsultPolicies, consultPolicyKey, mergeCommitments, authoredClock, hasAuthoredContent, mergeInferredLayers };
   if (typeof globalThis !== 'undefined') globalThis.PhaedoSyncMerge = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })();

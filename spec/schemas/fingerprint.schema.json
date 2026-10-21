@@ -190,7 +190,27 @@
         "threshold": { "description": "Reserved (§4.2.7); not yet emitted." },
         "observation_count": { "type": "integer", "minimum": 0 },
         "session_refs": { "type": "array", "items": { "type": "string" } },
-        "last_observed": { "type": "string", "description": "RFC 3339 timestamp of the most recent observation." }
+        "last_observed": { "type": "string", "description": "RFC 3339 timestamp of the most recent observation." },
+        "ledger": {
+          "type": "object",
+          "description": "OPTIONAL (v0.1.70) — per-source evidence for an inferred signal (§4.2 'Signal evidence ledger'). `legacy` is evidence recorded before attribution (shared history, reconciled by max); `by_source` holds one grow-only entry per contributing producer. The signal's observation_count / confidence / value / last_observed are DERIVED from it.",
+          "properties": {
+            "legacy": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/ledger_entry" }] },
+            "by_source": { "type": "object", "additionalProperties": { "$ref": "#/$defs/ledger_entry" } }
+          }
+        }
+      }
+    },
+    "ledger_entry": {
+      "type": "object",
+      "description": "One source's evidence for one signal (v0.1.70).",
+      "properties": {
+        "observation_count": { "type": "integer", "minimum": 0 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "value": { "description": "Same shape as the signal's value." },
+        "last_observed": { "type": ["string", "null"] },
+        "context": { "enum": ["personal", "work"], "description": "The side of the subject's life the contributing client serves, as chosen on the vault device." },
+        "value_counts": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 }, "description": "OPTIONAL (v0.1.71) — per-value observation tally for a scalar, keyed by the value's canonical JSON. The derived value is the most-observed across entries." }
       }
     }
   }

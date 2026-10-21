@@ -29,6 +29,10 @@ export const ROOT_FILES = [
   'kdf.js',
   'identity.js',
   'commitments.js',
+  // extraction/reconcile.js imports it (per-source signal ledgers, multi-browser sync).
+  'signal-ledger.js',
+  // extraction/rule-promotion.js imports it (one plain sentence per trait, 2026-10-08).
+  'trait-phrases.js',
 ];
 
 /** capture/ — the capture hook + tier-3 fold closure, vendored to mcp/vendor/capture/. */

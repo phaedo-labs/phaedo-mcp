@@ -17,6 +17,7 @@ import {
   shape, SIGNALS, CONSULTATION_TYPES, validateVaultShape, consultDrivers,
   deriveDelegationSignals, withDelegationSignals, buildDelegationPromotions, DELEGATION_PROMOTION_FLOOR,
   authoredDelegationSignals,
+  RESOLVER_REVISION,
 } from './consult-core.js';
 
 // Re-export the core surface so existing importers (server.js, tests,
@@ -110,6 +111,24 @@ export function consultOptsFromEnv(env = process.env) {
   };
 }
 
+// Which engine answered a response this module returned: the opt-in model judge, or the
+// deterministic rules. A WeakMap rather than a field because the §10.3 response shape is
+// closed (additionalProperties:false) and this is local provenance, never for the agent.
+const JUDGED_BY = new WeakMap();
+
+/**
+ * Append the `resolverRevision` provenance driver to a consult's drivers: the rules'
+ * RESOLVER_REVISION, or `judge:<model>` when the model judge answered. Only when there are
+ * drivers already — the receipt schema documents drivers as absent for deterministic
+ * pre-flights and abstains, which carry no inferred prediction to attribute.
+ * Pass the response EXACTLY as resolveConsultation returned it (before any copy).
+ */
+export function withRevision(drivers, response) {
+  if (!Array.isArray(drivers) || !drivers.length) return Array.isArray(drivers) ? drivers : [];
+  const judge = response && typeof response === 'object' ? JUDGED_BY.get(response) : undefined;
+  return [...drivers, { cue: 'resolverRevision', value: judge ? `judge:${judge}` : RESOLVER_REVISION, confidence: null, basis: null }];
+}
+
 // Public async entry: model judge when configured, else the deterministic core.
 // voice_draft always takes the (redirect) core path. Authored policies (§10.5)
 // override either result, so a standing guardrail always wins. Never throws except
@@ -132,7 +151,9 @@ export async function resolveConsultation(vd, request = {}, opts = {}) {
       // Authored guardrails override the model judge too (applied last so they win).
       // Same §10.5 context as the deterministic path — including the serving
       // `client_id`, so `agents` scoping is not bypassed by configuring a model.
-      return applyPolicies(judged, n, loadPolicies(vd, opts), { now: opts.now, clientId: opts.clientId ?? null });
+      const out = applyPolicies(judged, n, loadPolicies(vd, opts), { now: opts.now, clientId: opts.clientId ?? null });
+      if (out && typeof out === 'object') JUDGED_BY.set(out, String(opts.model));
+      return out;
     } catch (err) {
       process.stderr.write?.(`[phaedo-consult] model judge fell back to rules: ${err.message}\n`);
     }

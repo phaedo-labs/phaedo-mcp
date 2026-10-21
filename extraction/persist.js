@@ -30,11 +30,16 @@ import { applyCaptureSources } from './capture-combine.js';
 // — otherwise a delta write from one surface would clobber the accumulated counts
 // of the others (delta reconcile is replace-by-key). Callers that hold a vault
 // with capture sources MUST pass them on every delta-writing merge.
-export function mergeExtractionInto(fingerprint, update, now = new Date().toISOString(), captureSources = null) {
+//
+// `attr` (optional { sourceId, context }): which browser this pass ran in. Extraction evidence is
+// then recorded per source (signal-ledger.js), so learning from several browsers adds up at sync
+// instead of the newest copy replacing the rest.
+export function mergeExtractionInto(fingerprint, update, now = new Date().toISOString(), captureSources = null, attr = null) {
   const effective = (Array.isArray(captureSources) && captureSources.length)
     ? applyCaptureSources(update, captureSources, now)
     : update;
-  const merged = promoteRules(reconcileFingerprint(fingerprint || {}, effective, { now }), { now });
+  const ropts = attr && attr.sourceId ? { now, sourceId: attr.sourceId, context: attr.context } : { now };
+  const merged = promoteRules(reconcileFingerprint(fingerprint || {}, effective, ropts), { now });
   merged.updated_at = now;    // bump for sync last-write-wins
   return merged;
 }

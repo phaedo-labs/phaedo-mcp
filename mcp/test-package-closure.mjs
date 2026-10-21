@@ -195,7 +195,8 @@ try {
       PHAEDO_MCP_STATE_DIR: stateDir,
       // Hermetic, for the same reason test-smoke.mjs pins these: a paired dev box
       // would otherwise send this test's traffic to the owner's real phone.
-      PHAEDO_FINGERPRINT: join(installed, 'sample-fingerprint.json'),
+      // The keyword form, so the packed package proves the opt-in a README reader types.
+      PHAEDO_FINGERPRINT: 'sample',
       PHAEDO_PAIRING: join(stateDir, 'pairing.json'),
     },
   });
@@ -225,6 +226,19 @@ try {
   ok(payload.projection.startsWith('<phaedo_user_profile>'), 'packed server returns a real projection block');
 
   await client.close();
+
+  // A stranger's first run: the packed server, nothing configured. Through 0.3.0 this served
+  // the shipped sample — a made-up person's style — with no word that it had.
+  const strangerEnv = { ...process.env, PHAEDO_MCP_STATE_DIR: join(tmp, 'stranger-state') };
+  delete strangerEnv.PHAEDO_FINGERPRINT;
+  delete strangerEnv.PHAEDO_PAIRING;
+  const stranger = new Client({ name: 'phaedo-package-closure-stranger', version: '0.0.0' });
+  await stranger.connect(new StdioClientTransport({ command: process.execPath, args: [join(installed, 'server.js')], env: strangerEnv }));
+  const first = await stranger.callTool({ name: 'phaedo_request_injection', arguments: {} });
+  ok(first.isError, 'unconfigured packed server does not hand back a profile');
+  ok(first.content[0].text.includes('No Phaedo profile is set up'), 'unconfigured packed server says plainly there is no profile');
+  ok(!first.content[0].text.includes('sample-0000'), 'unconfigured packed server never serves the sample');
+  await stranger.close();
 } finally {
   rmSync(tmp, { recursive: true, force: true });
 }

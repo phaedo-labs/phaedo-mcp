@@ -24,6 +24,10 @@
 
 import { renderLayerSummary } from './fingerprint-update.js';
 import { resolveDimension, valKey, authoredGovernedKeys } from './resolve.js';
+// Per-source ledgers (multi-browser): a classic UMD file, loaded for its side effect and read off
+// globalThis so the same file serves the popup's classic scripts, this module and Node.
+import '../signal-ledger.js';
+const SL = globalThis.PhaedoSignalLedger;
 
 const CONFIDENCE_CAP = 0.95;
 
@@ -39,13 +43,21 @@ function unionArrays(a = [], b = []) {
 }
 
 // Merge two signal objects with the same (field, polarity) key.
-function mergeSignal(existing, incoming, now) {
+//
+// `attr` ({ sourceId, context }, optional): WHO produced this increment. When given, the evidence
+// is recorded in the signal's per-source ledger (signal-ledger.js) and the totals are re-derived
+// from it, so a second browser's learning ADDS to this one's at sync instead of replacing it.
+// Without it (tests, the desktop fold) the behaviour is exactly the pre-ledger accumulate.
+function mergeSignal(existing, incoming, now, attr) {
   // Delta signals carry Path A's CUMULATIVE count — a re-lift is a fresh
   // snapshot of the same counters, not new evidence. Replace wholesale so
   // re-running the lift every pass is idempotent (no count/confidence
   // inflation). Keep the stable signal_id.
   if (incoming.source === 'delta') {
     return { ...incoming, signal_id: existing.signal_id || incoming.signal_id };
+  }
+  if (attr && attr.sourceId && SL && SL.isLedgered(incoming)) {
+    return SL.attribute(existing, incoming, attr.sourceId, { now, context: attr.context });
   }
   const observation_count = (existing.observation_count || 1) + (incoming.observation_count || 1);
   // Value merge: arrays union; scalar/enum/string keep the higher-confidence
@@ -86,15 +98,19 @@ const sigKey = s => `${s.field}::${s.polarity}${typeof s.domain === 'string' ? `
 // Reconcile one incoming layer doc into an existing layer doc (or undefined).
 // Returns a new layer object; does not mutate inputs. `suppress` (optional Set of
 // "field"/"field::domain") withholds those dimensions from the rendered summary —
-// the §4.7 injection-suppression of an open-conflict dimension.
-export function reconcileLayer(existingLayer, incomingLayer, now, suppress) {
+// the §4.7 injection-suppression of an open-conflict dimension. `attr` — see mergeSignal.
+export function reconcileLayer(existingLayer, incomingLayer, now, suppress, attr) {
   const base = existingLayer ? { ...existingLayer } : {};
   const existingSignals = Array.isArray(base.signals) ? base.signals : [];
   const byKey = new Map(existingSignals.map(s => [sigKey(s), s]));
+  const attributed = !!(attr && attr.sourceId && SL);
 
   for (const inc of incomingLayer.signals || []) {
     const k = sigKey(inc);
-    byKey.set(k, byKey.has(k) ? mergeSignal(byKey.get(k), inc, now) : inc);
+    if (byKey.has(k)) byKey.set(k, mergeSignal(byKey.get(k), inc, now, attr));
+    // A NEW signal is attributed too, or the same signal first seen independently on two
+    // browsers would carry no ledger on either and merge last-write-wins.
+    else byKey.set(k, attributed && SL.isLedgered(inc) ? SL.attribute(null, inc, attr.sourceId, { now, context: attr.context }) : inc);
   }
 
   const mergedSignals = Array.from(byKey.values());
@@ -248,10 +264,35 @@ export function reconcileFingerprint(fingerprint, update, opts = {}) {
       ...openConflictFieldKeys(conflicts, layerId),
       ...authoredGovernedKeys([...((prev && prev.signals) || []), ...(incomingLayer.signals || [])], rules, opts.domain || null),
     ]);
-    fp.layers[layerId] = reconcileLayer(prev, incomingLayer, now, suppress);
+    fp.layers[layerId] = reconcileLayer(prev, incomingLayer, now, suppress, opts.sourceId ? { sourceId: opts.sourceId, context: opts.context } : null);
   }
   if (conflicts && conflicts.length) fp.conflict_records = conflicts;
   return fp;
+}
+
+// Re-render every layer's `summary` from its CURRENT signals, with the same suppression
+// reconcileFingerprint applies (open conflicts + dimensions an authored rule governs).
+//
+// A cross-browser sync merges signals without running a pass (signal-ledger.js mergeLayers), and
+// the injected context reads `summary`, not signals — so without this, evidence that just arrived
+// from another browser would sit in storage and never reach a prompt until this browser's next
+// extraction pass. Returns the same object when no summary changes.
+export function rerenderSummaries(fingerprint, opts = {}) {
+  if (!fingerprint || !fingerprint.layers) return fingerprint;
+  const rules = Array.isArray(fingerprint.standing_rules) ? fingerprint.standing_rules : [];
+  let out = null;
+  for (const [layerId, layer] of Object.entries(fingerprint.layers)) {
+    if (!layer || !Array.isArray(layer.signals) || !layer.signals.length) continue;
+    const suppress = new Set([
+      ...openConflictFieldKeys(fingerprint.conflict_records, layerId),
+      ...authoredGovernedKeys(layer.signals, rules, opts.domain || null),
+    ]);
+    const summary = renderLayerSummary(effectiveSignals(layer.signals).filter(s => s.source !== 'questionnaire'), suppress);
+    if (summary === layer.summary) continue;
+    out = out || { ...fingerprint, layers: { ...fingerprint.layers } };
+    out.layers[layerId] = { ...layer, summary };
+  }
+  return out || fingerprint;
 }
 
 // The (field / field::domain) keys of the OPEN conflicts on a layer — the dimensions

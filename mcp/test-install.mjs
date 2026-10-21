@@ -124,7 +124,7 @@ try {
   ok(applyToClient(badClient, { action: 'install', entry }).status === 'error', 'malformed config → error');
   ok(readFileSync(badPath, 'utf8') === '{ broken', 'malformed config left untouched');
 
-  // ── Consult model judge env (on by default) ────────────────────────────────
+  // ── Consult model judge env (OFF by default since 2026-10-18 — opt in) ─────
   section('buildConsultEnv');
   const ce = buildConsultEnv({ model: 'llama3.1:8b', url: 'http://localhost:11434' });
   ok(ce.PHAEDO_CONSULT_MODEL === 'llama3.1:8b' && ce.PHAEDO_CONSULT_MODEL_URL === 'http://localhost:11434', 'writes model + url env');
@@ -132,6 +132,30 @@ try {
   ok(buildConsultEnv().PHAEDO_CONSULT_MODEL === 'llama3.1:8b', 'sensible default model');
   // the env flows into the server entry written to client config
   ok('env' in serverEntry({ env: buildConsultEnv() }), 'consult env attaches to the server entry');
+
+  section('model judge default — the real installer, temp HOME');
+  {
+    const { spawnSync } = await import('child_process');
+    const home = mkdtempSync(join(tmpdir(), 'phaedo-judge-'));
+    // An old default-on install left a judge env (the embedding model, as on the dev Mac).
+    mkdirSync(join(home, '.cursor'), { recursive: true });
+    writeFileSync(join(home, '.cursor', 'mcp.json'), JSON.stringify({ mcpServers: { phaedo: {
+      command: process.execPath, args: [join(process.cwd(), 'server.js')],
+      env: { PHAEDO_CONSULT_MODEL: 'nomic-embed-text:latest', PHAEDO_CONSULT_MODEL_URL: 'http://localhost:11434' } } } }));
+    const run = (...args) => spawnSync(process.execPath, ['install.mjs', '--only', 'cursor', ...args],
+      { env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: 'utf8', timeout: 20000 });
+    const dry = run('--dry-run');
+    ok(/model judge OFF/.test(dry.stdout), 'plain install → judge OFF');
+    const pinned = run('--dry-run', '--consult-model', 'qwen2.5:7b');
+    ok(/model judge ON → qwen2\.5:7b .*\(pinned\)/.test(pinned.stdout), '--consult-model → ON, pinned');
+    const opted = run('--dry-run', '--model-judge', '--consult-url', 'http://127.0.0.1:9');
+    ok(/model judge ON/.test(opted.stdout), '--model-judge → ON (auto-detect)');
+    ok(/model judge OFF/.test(run('--dry-run', '--model-judge', '--no-model-judge').stdout), '--no-model-judge wins');
+    run();
+    const after = JSON.parse(readFileSync(join(home, '.cursor', 'mcp.json'), 'utf8')).mcpServers.phaedo;
+    ok(!after.env || !after.env.PHAEDO_CONSULT_MODEL, 'plain install removes the judge env an old default-on install wrote');
+    rmSync(home, { recursive: true, force: true });
+  }
 
   section('detectConsultModel (mocked Ollama)');
   const tags = (models) => async () => ({ ok: true, json: async () => ({ models }) });
@@ -143,6 +167,15 @@ try {
   ok(!d.reachable && d.model === 'llama3.1:8b', 'endpoint error → default + reachable:false');
   d = await detectConsultModel({ fetchImpl: async () => { throw new Error('ECONNREFUSED'); } });
   ok(!d.reachable && d.model === 'llama3.1:8b', 'Ollama down → graceful default');
+  // The dev Mac's real tag list: an embedding model sorts first and must never be the judge.
+  d = await detectConsultModel({ fetchImpl: tags(['phaedo-comprehensive335:latest', 'nomic-embed-text:latest', 'qwen2.5:7b', 'llama3.1:8b', 'llama3.2:3b'].map((name) => ({ name }))) });
+  ok(d.model === 'llama3.1:8b' && d.picked, 'embedding model skipped; the installed default preferred');
+  d = await detectConsultModel({ fetchImpl: tags(['nomic-embed-text:latest', 'mxbai-embed-large', 'bge-m3', 'qwen2.5:7b'].map((name) => ({ name }))) });
+  ok(d.model === 'qwen2.5:7b' && d.picked, 'no default installed → first chat model, every embedder skipped');
+  d = await detectConsultModel({ fetchImpl: tags([{ name: 'nomic-embed-text:latest' }]) });
+  ok(d.model === 'llama3.1:8b' && !d.picked, 'only an embedding model → default string, not picked');
+  d = await detectConsultModel({ fetchImpl: tags([{ name: 'llama3.1:8b' }]) , fallback: 'llama3.1:8b:latest' });
+  ok(d.model === 'llama3.1:8b', ':latest suffix does not hide the default');
 
   // ── Claude Code SessionStart hook ──────────────────────────────────────────
   section('Claude Code hook — path + command');
@@ -182,10 +215,42 @@ try {
   ok(!existsSync(join(hookHome, '.claude', 'settings.json')), 'dry-run wrote nothing');
   const ci = applyCodeHook({ action: 'install', home: hookHome });
   ok(ci.status === 'configured', 'install configures the hook');
+  ok(typeof ci.restartHint === 'string' && /new Claude Code session/.test(ci.restartHint), 'configured hook carries a restart hint (printed "undefined" before)');
   const written = JSON.parse(readFileSync(join(hookHome, '.claude', 'settings.json'), 'utf8'));
   ok(written.hooks.SessionStart[0].hooks[0].command.includes('session-start.mjs'), 'hook command written');
+  // Capture: SessionEnd for sessions that end, Stop for the desktop app's open-for-days ones.
+  ok(written.hooks.SessionEnd?.[0]?.hooks?.[0]?.command?.includes('session-end.mjs'), 'SessionEnd capture hook written');
+  ok(written.hooks.Stop?.length === 1 && written.hooks.Stop[0].hooks[0].command.includes('stop-capture.mjs'), 'Stop capture hook written (open sessions)');
+  // Ship hook: the same script on all three Bash events, matcher-scoped, with a timeout.
+  for (const ev of ['PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure']) {
+    const e = (written.hooks[ev] || []).find((x) => x.hooks?.[0]?.command?.includes('pre-ship.mjs'));
+    ok(!!e && e.matcher === 'Bash' && e.hooks[0].timeout === 15, `ship hook on ${ev}: Bash matcher + timeout`);
+  }
   ok(applyCodeHook({ action: 'install', home: hookHome }).status === 'unchanged', 'second install unchanged');
+  // An older install (no ship hook) upgrades to one, and a sibling PreToolUse hook survives.
+  {
+    const p = join(hookHome, '.claude', 'settings.json');
+    const old = JSON.parse(readFileSync(p, 'utf8'));
+    for (const ev of ['PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure', 'Stop']) delete old.hooks[ev];
+    old.hooks.PreToolUse = [{ matcher: 'Edit', hooks: [{ type: 'command', command: 'theirs' }] }];
+    old.hooks.Stop = [{ hooks: [{ type: 'command', command: 'their-stop' }] }];
+    writeFileSync(p, JSON.stringify(old));
+    ok(applyCodeHook({ action: 'install', home: hookHome }).status === 'configured', 'old install upgrades to the ship + Stop capture hooks');
+    const up = JSON.parse(readFileSync(p, 'utf8'));
+    ok(up.hooks.PreToolUse.length === 2 && up.hooks.PreToolUse[0].hooks[0].command === 'theirs', 'sibling PreToolUse hook kept');
+    ok(up.hooks.Stop.length === 2 && up.hooks.Stop[0].hooks[0].command === 'their-stop' &&
+       up.hooks.Stop[1].hooks[0].command.includes('stop-capture.mjs'), "Stop capture added beside the user's own Stop hook");
+    ok(applyCodeHook({ action: 'install', home: hookHome }).status === 'unchanged', 're-install does not duplicate the Stop entry');
+  }
   ok(applyCodeHook({ action: 'uninstall', home: hookHome }).status === 'removed', 'uninstall removes it');
+  {
+    const left = JSON.parse(readFileSync(join(hookHome, '.claude', 'settings.json'), 'utf8'));
+    ok(!JSON.stringify(left).includes('pre-ship.mjs'), 'uninstall removes every ship-hook entry');
+    ok(left.hooks?.PreToolUse?.[0]?.hooks?.[0]?.command === 'theirs', "uninstall leaves the user's own hook");
+    ok(!JSON.stringify(left).includes('stop-capture.mjs') && !JSON.stringify(left).includes('session-end.mjs'), 'uninstall removes both capture hooks');
+    ok(left.hooks?.Stop?.length === 1 && left.hooks.Stop[0].hooks[0].command === 'their-stop', "uninstall leaves the user's own Stop hook");
+    ok(left.hooks.PostToolUse === undefined, 'emptied event pruned');
+  }
   ok(applyCodeHook({ action: 'uninstall', home: hookHome }).status === 'absent', 'second uninstall is no-op');
   rmSync(hookHome, { recursive: true, force: true });
 } finally {

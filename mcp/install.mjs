@@ -35,6 +35,18 @@ const CAPTURE_HOOK_PATH = join(BASE_DIR, 'hooks', 'session-end.mjs');
 const ENTRY_KEY = 'phaedo';
 const HOOK_MARKER = 'hooks/session-start.mjs';         // identifies our SessionStart entry
 const CAPTURE_HOOK_MARKER = 'hooks/session-end.mjs';   // identifies our SessionEnd capture entry
+// The same capture, run on Stop (end of each turn) for sessions that stay open for days
+// (the desktop app's) — throttled per session inside the hook, so most Stops cost one read.
+const STOP_CAPTURE_HOOK_PATH = join(BASE_DIR, 'hooks', 'stop-capture.mjs');
+const STOP_CAPTURE_HOOK_MARKER = 'hooks/stop-capture.mjs';
+const SHIP_HOOK_PATH = join(BASE_DIR, 'hooks', 'pre-ship.mjs');
+const SHIP_HOOK_MARKER = 'hooks/pre-ship.mjs';           // identifies our ship-consult entries
+// The ship hook (consult before a merge / deploy / phone build) runs on four Bash events:
+// before the command, when a prompt is shown (the evidence a person was asked), and after
+// it ran or failed (to record that person's yes). Its own budget is 12s; the timeout is
+// the backstop.
+export const SHIP_HOOK_EVENTS = ['PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure'];
+const SHIP_HOOK_ENTRY = { matcher: 'Bash', timeout: 15 };
 
 // ── Client registry ──────────────────────────────────────────────────────────
 // Every supported client stores MCP servers as a top-level `mcpServers` object,
@@ -74,7 +86,13 @@ export function serverEntry({ nodePath = process.execPath, serverPath = SERVER_P
   return entry;
 }
 
-// ── Consult model judge config (on by default) ────────────────────────────────
+// ── Consult model judge config (OFF by default — opt in) ──────────────────────
+// Was on by default. Measured 2026-10-18 on the dev Mac against the same cached profile:
+// llama3.1:8b answered a $12k IRREVERSIBLE payment `clarify 0.9` on one run and
+// `proceed_with_note 0.9` on the next — flipping between runs, toward proceeding, with
+// high confidence both times — where the rule engine says `clarify` every time. A judge
+// that can talk itself into a payment does not get to be the default. Opt in with
+// --model-judge (auto-detect) or --consult-model <id> (pin).
 // The MCP server runs the consult model judge when PHAEDO_CONSULT_MODEL is set;
 // it falls back to the local rule engine if the model/Ollama isn't there, so
 // defaulting it ON is safe. We write a LOCAL endpoint only (privacy-clean); a
@@ -88,15 +106,21 @@ export function buildConsultEnv({ model = DEFAULT_CONSULT_MODEL, url = DEFAULT_C
 }
 
 // Probe local Ollama so "on by default" works with whatever model the user has.
-// Picks the first installed general-purpose model (skips the phaedo extraction
-// fine-tune). Falls back to the default string + reachable:false on any failure.
+// Prefers the default when it is installed, else the first installed CHAT model —
+// skipping the phaedo extraction fine-tunes and embedding models. An embedding model
+// cannot answer a chat prompt: `nomic-embed-text` was picked on the dev Mac (it sorts
+// before llama3.1:8b), every judge call failed in ~15 ms and fell back to the rules,
+// and the installer kept printing "model judge ON" for a judge that had never run.
+// Falls back to the default string + reachable:false on any failure.
+const NOT_A_JUDGE = /phaedo|extract|embed|nomic|bge|minilm|mxbai|arctic|e5-|gte-|rerank/i;
 export async function detectConsultModel({ url = DEFAULT_CONSULT_URL, fallback = DEFAULT_CONSULT_MODEL, fetchImpl = globalThis.fetch } = {}) {
   try {
     const res = await fetchImpl(`${url.replace(/\/$/, '')}/api/tags`, { signal: AbortSignal.timeout(1500) });
     if (!res.ok) return { model: fallback, reachable: false, hadModels: false };
     const data = await res.json();
     const names = (data.models || []).map((m) => m.name || m.model).filter(Boolean);
-    const general = names.find((n) => !/phaedo|extract/i.test(n));
+    const bare = (n) => String(n).replace(/:latest$/, '');
+    const general = names.find((n) => bare(n) === bare(fallback)) || names.find((n) => !NOT_A_JUDGE.test(n));
     return { model: general || fallback, reachable: true, hadModels: names.length > 0, picked: !!general };
   } catch {
     return { model: fallback, reachable: false, hadModels: false };
@@ -161,14 +185,18 @@ const isPhaedoHookEntryFor = (marker) => (e) =>
 
 // Generic per-event merge/remove — the SessionStart (injection) and SessionEnd
 // (capture) entries use the same shape, distinguished by their script-path marker.
-export function mergeHookEntry(settings, event, command, marker) {
+// `matcher` / `timeout` (optional) are for tool events: the ship hook filters to Bash.
+export function mergeHookEntry(settings, event, command, marker, { matcher, timeout } = {}) {
   const isOurs = isPhaedoHookEntryFor(marker);
   const next = { ...settings, hooks: { ...(settings.hooks || {}) } };
   const prior = Array.isArray(next.hooks[event]) ? next.hooks[event] : [];
   const others = prior.filter((e) => !isOurs(e)); // drop a stale phaedo entry (path refresh)
   const existing = prior.find(isOurs);
-  const already = !!existing && existing.hooks.some((h) => h.command === command);
-  next.hooks[event] = [...others, { hooks: [{ type: 'command', command }] }];
+  const handler = { type: 'command', command, ...(timeout ? { timeout } : {}) };
+  const entry = { ...(matcher ? { matcher } : {}), hooks: [handler] };
+  const already = !!existing && existing.matcher === entry.matcher &&
+    existing.hooks.some((h) => h.command === command && h.timeout === handler.timeout);
+  next.hooks[event] = [...others, entry];
   return { settings: next, changed: !already };
 }
 
@@ -208,11 +236,18 @@ export function applyCodeHook({ action, dryRun = false, home = homedir() } = {})
     if (!read.existed) return { name, status: 'absent', detail: 'no settings.json' };
     const start = removeSessionStartHook(read.config);
     const both = removeHookEntry(start.settings, 'SessionEnd', CAPTURE_HOOK_MARKER);
-    if (!start.changed && !both.changed) return { name, status: 'absent', detail: 'no phaedo hook to remove' };
-    if (!dryRun) { backup(path); writeConfig(path, both.settings); }
+    const stop = removeHookEntry(both.settings, 'Stop', STOP_CAPTURE_HOOK_MARKER);
+    let s = stop.settings;
+    let shipChanged = false;
+    for (const ev of SHIP_HOOK_EVENTS) {
+      const r = removeHookEntry(s, ev, SHIP_HOOK_MARKER);
+      s = r.settings; shipChanged = shipChanged || r.changed;
+    }
+    if (!start.changed && !both.changed && !stop.changed && !shipChanged) return { name, status: 'absent', detail: 'no phaedo hook to remove' };
+    if (!dryRun) { backup(path); writeConfig(path, s); }
     return { name, status: dryRun ? 'would-remove' : 'removed', detail: path };
   }
-  // Always install SessionStart injection. Only install the SessionEnd CAPTURE hook
+  // Always install SessionStart injection. Only install the SessionEnd + Stop CAPTURE hooks
   // when its dependencies actually resolve from THIS install location: the hook loads
   // capture/* and extraction/delta-lift.js via lib/capture-home.js — repo root in a
   // clone, mcp/vendor/ in the published tarball (build-package.mjs vendors the
@@ -225,17 +260,27 @@ export function applyCodeHook({ action, dryRun = false, home = homedir() } = {})
   let captureNote = '';
   if (captureHookAvailable()) {
     const both = mergeHookEntry(settings, 'SessionEnd', hookCommand({ hookPath: CAPTURE_HOOK_PATH }), CAPTURE_HOOK_MARKER);
-    settings = both.settings; captureChanged = both.changed;
+    const stop = mergeHookEntry(both.settings, 'Stop', hookCommand({ hookPath: STOP_CAPTURE_HOOK_PATH }), STOP_CAPTURE_HOOK_MARKER);
+    settings = stop.settings; captureChanged = both.changed || stop.changed;
   } else {
     // Never leave a broken capture hook wired if we can't run it here.
     const rm = removeHookEntry(settings, 'SessionEnd', CAPTURE_HOOK_MARKER);
-    settings = rm.settings; captureChanged = rm.changed;
+    const rmStop = removeHookEntry(rm.settings, 'Stop', STOP_CAPTURE_HOOK_MARKER);
+    settings = rmStop.settings; captureChanged = rm.changed || rmStop.changed;
     captureNote = ' (capture hook skipped — not available in this install; injection only)';
   }
-  const changed = start.changed || captureChanged;
+  // Ship hook: consult before a merge / deploy / phone build. Its imports are all inside
+  // mcp/, so it runs wherever the server does — no availability gate needed.
+  let shipChanged = false;
+  for (const ev of SHIP_HOOK_EVENTS) {
+    const r = mergeHookEntry(settings, ev, hookCommand({ hookPath: SHIP_HOOK_PATH }), SHIP_HOOK_MARKER, SHIP_HOOK_ENTRY);
+    settings = r.settings; shipChanged = shipChanged || r.changed;
+  }
+  const changed = start.changed || captureChanged || shipChanged;
   if (!changed) return { name, status: 'unchanged', detail: `already configured${captureNote}` };
   if (!dryRun) { if (read.existed) backup(path); writeConfig(path, settings); }
-  return { name, status: dryRun ? 'would-write' : 'configured', detail: path + captureNote };
+  return { name, status: dryRun ? 'would-write' : 'configured', detail: path + captureNote,
+    restartHint: 'Start a new Claude Code session — hooks load when a session starts.' };
 }
 
 // The SessionEnd capture hook can only run where its imported modules resolve —
@@ -370,6 +415,7 @@ function parseArgs(argv) {
     else if (a === '--consult-model') opts.consultModel = argv[++i];
     else if (a === '--consult-url') opts.consultUrl = argv[++i];
     else if (a === '--no-model-judge') opts.noModelJudge = true;
+    else if (a === '--model-judge') opts.modelJudge = true;
     else if (a === '--capture-model') opts.captureModel = argv[++i];
     else if (a === '--capture-url') opts.captureUrl = argv[++i];
     else if (a === '--help' || a === '-h') opts.help = true;
@@ -396,10 +442,11 @@ const HELP = `Phaedo MCP installer
   node install.mjs --dry-run       preview changes, write nothing
   node install.mjs --only <id>     one client only: claude-desktop | cursor | claude-code
 
-  Consult model judge (ON by default, local Ollama, falls back to the rule engine):
-  node install.mjs --consult-model <id>   pin the model (e.g. llama3.1:8b)
+  Consult model judge (OFF by default — the rule engine answers; opt in below):
+  node install.mjs --model-judge          turn it on, auto-detecting a local Ollama chat model
+  node install.mjs --consult-model <id>   turn it on with a pinned model (e.g. llama3.1:8b)
   node install.mjs --consult-url <url>    endpoint (default http://localhost:11434)
-  node install.mjs --no-model-judge       rule engine only (no model env)
+  node install.mjs --no-model-judge       rule engine only (the default; kept for scripts)
 `;
 
 function runPairing() {
@@ -427,12 +474,12 @@ async function main(argv) {
 
   const action = opts.uninstall ? 'uninstall' : 'install';
 
-  // Consult model judge: ON by default. Pin it if --consult-model is given,
-  // otherwise probe local Ollama and pick an installed general model. Off with
-  // --no-model-judge. Always falls back to the rule engine at runtime, so a
-  // missing model never breaks consultation.
+  // Consult model judge: OFF unless asked for (see the measurement above buildConsultEnv).
+  // --consult-model pins one; --model-judge probes local Ollama for an installed chat model.
+  // Always falls back to the rule engine at runtime, so a missing model never breaks
+  // consultation. A plain install REMOVES a judge env an earlier default-on install wrote.
   let env = {}, consultNote = '';
-  if (action === 'install' && !opts.noModelJudge) {
+  if (action === 'install' && !opts.noModelJudge && (opts.consultModel || opts.modelJudge)) {
     const url = opts.consultUrl || DEFAULT_CONSULT_URL;
     if (opts.consultModel) {
       env = buildConsultEnv({ model: opts.consultModel, url });
@@ -445,7 +492,7 @@ async function main(argv) {
         : `model judge ON → ${d.model} @ ${url} (Ollama not detected — falls back to the rule engine until it's running)`;
     }
   } else if (action === 'install') {
-    consultNote = 'model judge OFF (rule engine only)';
+    consultNote = 'model judge OFF — the rule engine answers (opt in: --model-judge)';
   }
   const entry = serverEntry({ env });
   console.log(`Phaedo MCP — ${action}${opts.dryRun ? ' (dry run)' : ''}`);
@@ -490,7 +537,7 @@ async function main(argv) {
       console.log('\nNext:');
       console.log('  1. Pair with your phone:  npm run pair   (or re-run with --pair)');
       console.log('  2. Restart any client that was already open:');
-      for (const r of touched) console.log(`       • ${r.name}: ${r.restartHint}`);
+      for (const r of touched) if (r.restartHint) console.log(`       • ${r.name}: ${r.restartHint}`);
       console.log('  3. Inject your fingerprint at session start:');
       console.log('       • any client: run the `/phaedo` prompt (one click), or call');
       console.log('         the `phaedo_request_injection` tool.');

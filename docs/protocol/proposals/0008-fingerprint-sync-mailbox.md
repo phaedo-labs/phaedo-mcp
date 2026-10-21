@@ -65,6 +65,9 @@ A bidirectional, pull-only mailbox on the relay, mirroring the seed mailbox.
 - `POST /fp-mailbox/:deviceId/:dir` — deposit ciphertext (latest-per-direction wins; 512 KB cap).
 - `GET  /fp-mailbox/:deviceId/:dir` — drain the latest **without consuming it**.
 - `dir ∈ {to_ext (phone→extension), to_phone (extension→phone), agent_to_ext (paired agent→extension)}`.
+  Since spec v0.1.70 `to_ext` / `to_phone` also take a per-browser sub-slot (`to_ext/<client_id>`,
+  `to_phone/<client_id>`) so several paired browsers stop overwriting each other; see
+  `mailbox-lanes.js` for the rollout rules.
 - TTL **7 days**; swept every 60 s alongside the seed mailbox.
 - The relay holds **only ciphertext** — it validates an `envelope` field is present but
   cannot read it.
@@ -72,8 +75,11 @@ A bidirectional, pull-only mailbox on the relay, mirroring the seed mailbox.
 `agent_to_ext` (spec v0.1.32) is a **separate slot** from `to_ext`: a paired agent (the
 MCP server) deposits an encrypted delegation-promotion suggestion for the extension to
 drain + union-merge, and using its own direction means an agent deposit can neither
-clobber nor be clobbered by the phone's `to_ext` fingerprint deposit. Same `fp_sync_key`
-(the MCP shares the extension's pairing), same ciphertext-only guarantee.
+clobber nor be clobbered by the phone's `to_ext` fingerprint deposit. Same ciphertext-only
+guarantee. *(Updated 2026-09-24: this originally said the MCP shares the extension's pairing
+and therefore its `fp_sync_key`. It no longer does — the MCP pairs with the phone directly
+(`mcp/pairing.js`, `client_type: 'mcp'`), so its deposit is sealed under its OWN key, the phone
+opens it, and the phone forwards the suggestions inside its `to_ext` deposit.)*
 
 **No-delete-on-read** is deliberate: draining is idempotent (clients merge — below), so a
 dropped GET response can never lose data; entries are superseded by a newer deposit or expire.

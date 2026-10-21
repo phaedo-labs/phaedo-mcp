@@ -356,6 +356,68 @@ function calibrate(vd, coverage, signalConfidence = 0) {
 
 const magnitudeRank = (m) => ({ low: 0, medium: 1, high: 2 }[m] ?? 1);
 
+// ── Amount bands (precedent track G8 B1) ──────────────────────────────────────
+// Until this, the inferred path never read `amount`: $12 and $12,000 answered alike
+// unless the agent ALSO labelled the magnitude, and only authored §10.5 rules saw money.
+// Now an amount sets a FLOOR under the magnitude the inferred path reasons about.
+//
+// Band edges are the subject's own numbers wherever they exist: every amount bound on an
+// authored rule (amount_gt / amount_lt / amount_lte — a grant's ceiling says what is small
+// to them as surely as a prohibition's floor says what is large). Rules scoped to the
+// action's domain (or unscoped) win; failing those, any authored amount anywhere; failing
+// that, DEFAULT_AMOUNT_EDGES — a stated default, recorded as such on the receipt, replaced
+// by the subject's first money rule.
+//
+// CAUTION-ONLY, by construction: the floor is max()'d with the declared magnitude, so it
+// can raise the stakes and never lower them. And it feeds the INFERRED path only — §10.5
+// matching keeps reading the declared magnitude, so an authored grant's `magnitude_max`
+// means exactly what the subject wrote.
+export const DEFAULT_AMOUNT_EDGES = [100, 1000];
+
+// ── Resolver revision (precedent track Phase 1b) ──────────────────────────────
+// Which version of the inferred path answered. Stamped on every inferred receipt (as a
+// `resolverRevision` driver — local provenance, never in the response) so agreement can be
+// split before/after a behaviour change instead of blurring into one number.
+//
+// BUMP THIS WHENEVER THE INFERRED PATH'S ANSWERS CHANGE. You will not be able to forget:
+// test-resolver-revision.mjs fingerprints the answers over a fixed grid and fails, naming
+// this constant, when they move under an unchanged revision. Format: <date>.<what changed>.
+//   (receipts before 2026-10-20 carry none — the pre-B1 rules and the first days of B1)
+export const RESOLVER_REVISION = '2026-10-19.amount-bands';
+
+function ruleAmounts(r) {
+  return [r?.amountGt, r?.amountLt, r?.amountLte].filter((x) => typeof x === 'number' && Number.isFinite(x) && x > 0);
+}
+function ruleCoversDomain(r, domain) {
+  const ds = Array.isArray(r?.domains) ? r.domains : [];
+  if (!ds.length) return true;                       // unscoped → speaks for every domain
+  if (!domain) return false;
+  const canon = canonicalDomain(domain);
+  return ds.some((d) => domain.includes(d) || (canon && canonicalDomain(d) === canon));
+}
+
+/** The band edges for this action: { edges: [low, high] (ascending, low may equal high), basis }. */
+export function amountEdges(policies, domain) {
+  const list = Array.isArray(policies) ? policies : [];
+  const scoped = list.filter((r) => ruleCoversDomain(r, domain)).flatMap(ruleAmounts);
+  const any = scoped.length ? scoped : list.flatMap(ruleAmounts);
+  if (!any.length) return { edges: DEFAULT_AMOUNT_EDGES.slice(), basis: null };
+  return { edges: [Math.min(...any), Math.max(...any)], basis: 'self_reported' };
+}
+
+/**
+ * The magnitude floor an amount implies, or null when it implies none.
+ * Above the high edge → `high`; above the low edge → `medium`. With a single authored
+ * number ("escalate above $1,000") both edges are that number: above it is `high`.
+ */
+export function amountFloor(n, policies) {
+  const a = n?.amount;
+  if (typeof a !== 'number' || !Number.isFinite(a) || a <= 0) return null;
+  const { edges: [lo, hi], basis } = amountEdges(policies, n.domain);
+  const band = a > hi ? 'high' : a > lo ? 'medium' : null;
+  return band ? { band, rank: magnitudeRank(band), basis } : null;
+}
+
 // ── Request validation/normalization (§10.2) ──────────────────────────────────
 export function normalizeRequest(request) {
   const type = request.consultation_type;
@@ -411,7 +473,8 @@ const USES_AMBIGUITY = new Set(['action_approval', 'escalation_default']);
 function resolveActionApproval(vd, n, suppressed) {
   const p = profile(vd, RELEVANT_CUES.action_approval, true, n.domain, suppressed);
   const irreversible = n.reversible === false;
-  const mag = magnitudeRank(n.magnitude);
+  // Declared stakes, raised (never lowered) by what the amount means to this subject.
+  const mag = Math.max(magnitudeRank(n.magnitude), n.amountBand ? n.amountBand.rank : 0);
   const thinEvidence = n.evidenceProvided.length === 0;
 
   let signal;
@@ -481,7 +544,7 @@ function resolveVoiceDraft() {
 // sees (§10.4 holds: provenance is for the subject's audit/calibration, not the agent).
 // Pure + defensive: bad/redirect/abstain inputs → []. Takes the raw request; normalizes
 // internally so callers pass exactly what they passed to the consult.
-export function consultDrivers(vd, request) {
+export function consultDrivers(vd, request, opts = {}) {
   let n;
   try { n = normalizeRequest(request || {}); } catch { return []; }
   const keys = RELEVANT_CUES[n.type];
@@ -498,6 +561,13 @@ export function consultDrivers(vd, request) {
   if (USES_AMBIGUITY.has(n.type)) {
     const a = readAmbiguity(vd, n.domain, suppressed);
     if (a.found) drivers.push(withOrigin({ cue: 'ambiguityPosture', value: a.value, confidence: a.confidence, basis: a.basis }, a.origin));
+  }
+  // The amount band, when it raised the stakes. basis `self_reported` = the subject's own
+  // thresholds; null = the stated default (no subject evidence behind it).
+  if (n.type === 'action_approval') {
+    let band = null;
+    try { band = amountFloor(n, loadPolicies(vd, opts)); } catch { /* provenance is non-critical */ }
+    if (band) drivers.push({ cue: 'amountBand', value: band.band, confidence: 1, basis: band.basis });
   }
   return drivers;
 }
@@ -796,7 +866,11 @@ const policyCtx = (opts = {}) => ({ now: opts.now, clientId: opts.clientId ?? nu
 export function resolveConsultationCore(vd, request = {}, opts = {}) {
   assertVaultUsable(vd);
   const n = normalizeRequest(request);
-  return applyPolicies(ruleResponse(vd, n), n, loadPolicies(vd, opts), policyCtx(opts));
+  const policies = loadPolicies(vd, opts);
+  // G8 B1: the amount's band, read against the subject's own thresholds. On `n` so the
+  // resolver sees it; applyPolicies does not read it (§10.5 matches the declared magnitude).
+  n.amountBand = amountFloor(n, policies);
+  return applyPolicies(ruleResponse(vd, n), n, policies, policyCtx(opts));
 }
 
 // Back-compat alias: the prior public name of the sync rule entry. Kept so existing

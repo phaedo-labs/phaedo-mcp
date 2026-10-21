@@ -1,6 +1,30 @@
 # Changelog — phaedo-mcp
 
-## 0.3.0 — pending publish (protocol v0.1.39 → v0.1.69)
+## 0.3.1 — unreleased
+
+### A fresh install says it has no profile — it no longer borrows a made-up one
+
+- **No pairing and no profile file now means no profile.** Through 0.3.0 the server fell back,
+  silently, to the shipped `sample-fingerprint.json` — so anyone who ran `npx phaedo-mcp`
+  without the phone app had a made-up person's style injected into their assistant, and
+  nothing said so. Every tool now returns a plain-language `decryption_failed` error instead:
+  there is no profile, nothing about the assistant changed, and how to get one.
+- **The example profile is opt-in by name:** `PHAEDO_FINGERPRINT=sample`. It resolves next to
+  the server, so it works from `npx` as well as from a clone.
+- **A `PHAEDO_FINGERPRINT` path that doesn't read is an error naming that path.** It used to
+  serve the sample, which looked exactly like success.
+- `test-no-profile.mjs`, and the packed-tarball test now boots the server unconfigured and
+  checks it refuses to serve the sample.
+- README: a newcomer's opening (what you need, try the example, use your own profile);
+  the developer reference follows it.
+
+### Capture
+
+- **Open sessions (2026-10-20):** a throttled `Stop` hook (`hooks/stop-capture.mjs`) captures
+  Claude Code sessions that stay open for days (the desktop app's), at most once per session
+  per 15 minutes, in a detached process so no turn waits. `--code-hook` wires it.
+
+## 0.3.0 — 2026-09-20 (protocol v0.1.39 → v0.1.69)
 
 > ### ⚠️ 0.2.0, 0.2.1 and 0.2.2 never started. Upgrade; do not diff against them.
 >

@@ -15,6 +15,12 @@
 // principal for §10.5 `agents` scoping, so these two properties are in tension until
 // the extension's drain gains the phone's try-each-verified-client loop.
 //
+// RESOLVED BY THE COURIER (verified 2026-09-24): the extension still cannot open an
+// independently-paired MCP's deposit, but it no longer has to. The PHONE drains this lane
+// with every verified client's key (mobile/src/lib/fpSync.ts drainAgentSuggestions) and
+// forwards the suggestions inside its to_ext deposit, which since spec v0.1.70 reaches EVERY
+// paired browser under that browser's own key. Independent pairing is the supported setup.
+//
 // The extension union-merges
 // the suggestions (sync-merge.js mergeAgentSuggestions) into suggested_rules, where the
 // existing popup review card surfaces them for endorsement.
