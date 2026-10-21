@@ -1,6 +1,26 @@
 # Changelog — phaedo-mcp
 
-## 0.3.2 — unreleased
+## 0.3.3 — unreleased
+
+### A starter profile without the phone
+
+- **No phone, no profile file, but Claude Code capture on → a starter profile.** The server
+  folds what the capture hook recorded on this computer onto an *empty* fingerprint and
+  serves that: only the user's own signals (for example "short answers, no headers"), labelled
+  preliminary by the projection's confidence section. It is served only when something was
+  learned; with nothing captured it is still "no profile". Id `starter-local`. A profile file
+  or a paired phone still wins, and pairing later carries the counts to the phone.
+- **One line in the server log about where the profile comes from**, after the handshake:
+  "no profile is set up on this computer…", "no phone paired; using a starter profile…", or
+  "using the made-up example profile". Silent when paired or a file is configured, and it never
+  contacts the phone at startup. Claude Desktop shows it in its MCP log.
+- The "no profile" message now names the Claude Code route; `npm run pull` says "starter
+  profile", not "from the phone", when that is what it read.
+- README: "Start a profile from your Claude Code sessions (no phone needed)".
+- Tests: `test-no-profile.mjs` (24) covers all four cases and the log line; the packed-tarball
+  test builds a starter profile in the published layout and reads the server's log.
+
+## 0.3.2 — 2026-10-20
 
 ### Described as what it is now
 

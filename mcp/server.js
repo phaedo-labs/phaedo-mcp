@@ -16,7 +16,7 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
-import { loadFingerprint, sourceOf } from './fingerprint-source.js';
+import { loadFingerprint, sourceOf, profileStatusLine } from './fingerprint-source.js';
 import { hasPairingRecord, loadPairingRecord } from './phone-source.js';
 import { depositDelegationSuggestions } from './delegation-sync.js';
 import { depositReceiptsDigest, drainAndApplyMarks } from './receipts-sync.js';
@@ -892,6 +892,12 @@ async function main() {
   await server.connect(transport);
   // stdio transport owns stdout for protocol framing — never console.log here.
   process.stderr.write('[phaedo-mcp] ready on stdio\n');
+  // Where the profile will come from, in one line, after the handshake so startup never waits
+  // on it. stderr is what Claude Desktop's MCP log shows — the one place a person debugging
+  // "why isn't Phaedo doing anything" will look. Best-effort: a failure here says nothing.
+  profileStatusLine(BASE_DIR)
+    .then((line) => { if (line) process.stderr.write(`[phaedo-mcp] ${line}\n`); })
+    .catch(() => {});
 }
 
 main().catch((err) => {

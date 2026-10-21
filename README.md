@@ -35,13 +35,15 @@ npm install -g phaedo-mcp
 cd "$(npm root -g)/phaedo-mcp" && npm run setup
 ```
 
-Your fingerprint comes from the Phaedo phone app, learned on-device from your
-actual usage. The app isn't open to the public yet
-([phaedo.so](https://phaedo.so) has a link to hear when it is). Until you pair
-it, the server says plainly that there is no profile; it does not guess. To try
-it with a made-up example profile, set `PHAEDO_FINGERPRINT=sample`. See
-[`mcp/README.md`](mcp/README.md) for the full guide (trying the example,
-pairing, policies, receipts, the agreement metric).
+Your full fingerprint comes from the Phaedo phone app, learned on-device from
+your actual usage. The app isn't open to the public yet
+([phaedo.so](https://phaedo.so) has a link to hear when it is). Without it, if
+you use Claude Code, the server builds a **starter profile** on your computer
+from your own sessions (`npm run setup:code-hook`). With neither, it says
+plainly that there is no profile; it does not guess. To try it with a made-up
+example profile, set `PHAEDO_FINGERPRINT=sample`. See
+[`mcp/README.md`](mcp/README.md) for the full guide (the starter profile,
+trying the example, pairing, policies, receipts, the agreement metric).
 
 ## Design commitments
 

@@ -5,10 +5,12 @@
 //   Phase 1b (phone): if a pairing record is configured (PHAEDO_PAIRING or
 //     mcp/pairing.json), authorize → pull /v1/profile → unwrap the §7.2 envelope
 //     from the paired phone (phone-source.js). Spec-faithful; no plaintext at rest.
-//   Phase 1a (local): otherwise read a local vault-payload JSON. With neither, there is
-//     no profile — tools say so (NO_PROFILE_MESSAGE); the shipped sample is opt-in only.
+//   Phase 1a (local): otherwise read a local vault-payload JSON. With neither, a STARTER
+//     profile from this computer's own capture (loadStarterProfile), else no profile — tools
+//     say so (NO_PROFILE_MESSAGE). The shipped sample is opt-in only.
 
 import { readFile } from 'fs/promises';
+import { existsSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { hasPairingRecord, loadPairingRecord, loadFingerprintFromPhone, PhoneError } from './phone-source.js';
@@ -78,6 +80,7 @@ export function foldConfigHome(vd) {
 // Resolution order for the local fixture (1a):
 //   1. PHAEDO_FINGERPRINT env var (absolute or cwd-relative path, or `sample`)
 //   2. ./fingerprint.json next to the server
+//   3. a starter profile folded from this computer's capture state (see loadStarterProfile)
 //   — nothing else. There is deliberately NO silent fallback to the shipped sample.
 //
 // NO PROFILE IS AN ANSWER, NOT A DEMO. Until 2026-10-20 an unpaired install with no file fell
@@ -100,8 +103,52 @@ function resolveSourcePath(baseDir) {
 export const NO_PROFILE_MESSAGE =
   'No Phaedo profile is set up on this computer, so there is nothing to load and Phaedo has ' +
   'not changed how the assistant responds. A profile comes from the Phaedo phone app, which is ' +
-  'not open to the public yet (https://phaedo.so to hear when it is). To try Phaedo with a made-up example profile ' +
-  'instead, set PHAEDO_FINGERPRINT=sample in this server\'s settings.';
+  'not open to the public yet (https://phaedo.so to hear when it is). Without the phone, Phaedo ' +
+  'can start one from your own Claude Code sessions on this computer once its Claude Code hook ' +
+  'is installed (see the README). To try a made-up example profile instead, set ' +
+  'PHAEDO_FINGERPRINT=sample in this server\'s settings.';
+
+// The same news for the server's log (Claude Desktop's MCP log shows stderr), one line.
+const NO_PROFILE_LOG =
+  'no profile is set up on this computer, so Phaedo will not change how the assistant responds. ' +
+  'Pair the Phaedo phone app, install the Claude Code hook to start one from your own sessions, ' +
+  'or set PHAEDO_FINGERPRINT=sample to try the example.';
+
+// STARTER PROFILE — the phone-less path.
+//
+// Someone without the phone app has no fingerprint to pull, but if they turned on the Claude
+// Code capture hook, this computer already holds their own signal counts (capture-local.js, the
+// tier-3 owner). Folding those onto an EMPTY fingerprint gives a profile made only of what they
+// did — never the sample's invented traits, which is what this branch fell back to until 0.3.0.
+// It is thin by construction (persona_strength 0; the projection's confidence section says
+// "treat all signals as preliminary"), and that is the honest label for it.
+//
+// Served only when the fold learned something: zero signals is still "no profile". The id is a
+// constant so receipts and the agreement metric stay on one subject across loads; pairing a
+// phone later replaces it (the phone inherits the cumulative counts — capture-local.js §5).
+export const STARTER_FINGERPRINT_ID = 'starter-local';
+
+async function loadStarterProfile(now = new Date().toISOString()) {
+  if (!await isLocalCaptureOwner(false)) return null;
+  const base = { phaedo_fingerprint: { fingerprint_id: STARTER_FINGERPRINT_ID, updated_at: now, layers: {} } };
+  const vd = await foldLocalCapture(base, { now });
+  const layers = (vd && vd.phaedo_fingerprint && vd.phaedo_fingerprint.layers) || {};
+  if (!Object.values(layers).some((l) => Array.isArray(l?.signals) && l.signals.length)) return null;
+  return markStarter(foldConfigHome(normalizeIdentity(vd)));
+}
+
+/** One line for the server log describing where the profile will come from, or null when there
+ *  is nothing a person needs told. Never touches the phone: a pull at startup would put an
+ *  "authorize" card on it with nobody asking. */
+export async function profileStatusLine(baseDir) {
+  const env = process.env.PHAEDO_FINGERPRINT;
+  if (env === SAMPLE_KEYWORD) return 'using the made-up example profile (PHAEDO_FINGERPRINT=sample).';
+  if (env) return null;
+  if (hasPairingRecord(baseDir)) return null;
+  if (existsSync(resolve(baseDir, 'fingerprint.json'))) return null;
+  if (await loadStarterProfile()) return 'no phone paired; using a starter profile built from your own sessions on this computer.';
+  return NO_PROFILE_LOG;
+}
 
 // Returns the vault payload:
 //   { phaedo_fingerprint, phaedo_behavioral_signals, phaedo_linguistic_profile,
@@ -125,6 +172,18 @@ function stamp(vd, cached) {
   try {
     Object.defineProperty(vd, SOURCE, {
       value: { live: false, cachedAt, ageMs: cachedAt ? Date.now() - cachedAt : null },
+      enumerable: false, configurable: true, writable: true,
+    });
+  } catch { /* frozen object — provenance is best-effort, never fatal */ }
+  return vd;
+}
+
+// A starter profile is read fresh every load (live), but it did not come from a phone —
+// `pull.js` must not say it did.
+function markStarter(vd) {
+  try {
+    Object.defineProperty(vd, SOURCE, {
+      value: { live: true, cachedAt: null, ageMs: 0, starter: true },
       enumerable: false, configurable: true, writable: true,
     });
   } catch { /* frozen object — provenance is best-effort, never fatal */ }
@@ -179,6 +238,8 @@ export async function loadFingerprint(baseDir) {
     // Only the default location may be absent quietly. A path the user NAMED that doesn't
     // read is their mistake to see, not "no profile".
     if (!process.env.PHAEDO_FINGERPRINT && err?.code === 'ENOENT') {
+      const starter = await loadStarterProfile();
+      if (starter) return starter;
       throw new PhaedoError('decryption_failed', NO_PROFILE_MESSAGE);
     }
     throw new PhaedoError('decryption_failed', `Could not read the Phaedo profile at ${path} (${err?.code || err?.message || err}).`);

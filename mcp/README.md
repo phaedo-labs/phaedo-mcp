@@ -18,12 +18,15 @@ when your phone is offline, is encrypted too.
 
 ## What you need
 
-1. **The Phaedo phone app.** Your profile lives there. The app isn't open to the
-   public yet — [phaedo.so](https://phaedo.so) has a link to hear when it is.
+1. **A profile**, from either:
+   - **the Phaedo phone app** — your full profile lives there. The app isn't open
+     to the public yet; [phaedo.so](https://phaedo.so) has a link to hear when it is.
+   - **your own Claude Code sessions** — no phone needed. Phaedo builds a starter
+     profile on this computer from how you work in Claude Code (see below).
 2. **Node.js**, free from [nodejs.org](https://nodejs.org) (the LTS button).
 
-Without the phone app there is no profile, and the server says so plainly rather
-than guessing. You can still try Phaedo with a made-up example profile.
+With neither, there is no profile, and the server says so plainly rather than
+guessing. You can still try Phaedo with a made-up example profile.
 
 ## Try it with the example profile (no phone needed)
 
@@ -62,6 +65,31 @@ Then start a new chat and ask: *"Load my Phaedo profile."* To stop using the
 example, delete the `env` line in Claude Desktop, or in Claude Code run
 `claude mcp remove -s user phaedo` and add it again without `-e …`. The server
 will then tell you there's no profile until you pair your phone.
+
+## Start a profile from your Claude Code sessions (no phone needed)
+
+If you use Claude Code, Phaedo can learn from how you work there and build a
+starter profile on this computer — for example, that you want short answers
+without headers. It starts thin and grows as you work.
+
+1. **Get this folder** as in step 1 below (Code → Download ZIP, unzip, open the
+   `mcp` folder).
+2. **Install the Claude Code hook.** In Terminal, from the `mcp` folder:
+   ```bash
+   npm install
+   ```
+   ```bash
+   npm run setup:code-hook
+   ```
+   This adds Phaedo to your AI apps and turns on three things in Claude Code:
+   loading your profile when a session starts, checking with you before it merges
+   or publishes, and learning from your sessions.
+3. **Quit and reopen Claude Code**, then keep working. The first sessions build the
+   profile, and each later session picks up what's been learned.
+
+What it reads stays on this computer: each session is reduced to counts (like "asked
+for a shorter answer, 4 times"), and the text itself is discarded. If you pair the
+phone app later, your full profile replaces the starter one and keeps what it learned.
 
 ## Use your own profile (with the phone app)
 
@@ -219,9 +247,11 @@ if you prefer.)*
 
 **Phase 1a — local JSON.** With no pairing record, reads a **vault payload**
 from `PHAEDO_FINGERPRINT` (a path, or the word `sample` for the shipped
-`mcp/sample-fingerprint.json`), then `mcp/fingerprint.json`. With neither, there
-is **no profile**: every tool returns a plain-language `decryption_failed` error
-saying so. The sample is never served unless asked for by name — until 0.3.1 it
+`mcp/sample-fingerprint.json`), then `mcp/fingerprint.json`. With neither, a
+**starter profile**: the Claude Code capture state on this computer folded onto an
+empty fingerprint (id `starter-local`), served only if it learned something. With
+nothing captured, there is **no profile**: every tool returns a plain-language
+`decryption_failed` error saying so. The sample is never served unless asked for by name — until 0.3.1 it
 was the silent fallback, so a fresh `npx phaedo-mcp` injected a made-up person's
 style without saying so. The file looks like this:
 ```json

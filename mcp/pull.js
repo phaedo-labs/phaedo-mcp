@@ -21,6 +21,13 @@ loadFingerprint(BASE_DIR)
     // profile went unnoticed while the agent answered authorization questions from it. The
     // whole point of this command is to verify the pairing works, so it has to distinguish
     // "your phone answered" from "your phone didn't, here's an old copy".
+    if (src.starter) {
+      process.stdout.write(
+        `✓ No phone paired — serving a starter profile built from your own sessions on this computer, ${layers} layer(s).\n` +
+        `  Pair the Phaedo phone app (npm run pair) to replace it with your full profile.\n`
+      );
+      process.exit(0);
+    }
     if (src.live) {
       process.stdout.write(
         `✓ Read your profile from the phone — fingerprint ${fp.fingerprint_id || '(no id)'}, ${layers} layer(s).\n`

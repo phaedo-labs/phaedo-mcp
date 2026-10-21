@@ -232,13 +232,42 @@ try {
   const strangerEnv = { ...process.env, PHAEDO_MCP_STATE_DIR: join(tmp, 'stranger-state') };
   delete strangerEnv.PHAEDO_FINGERPRINT;
   delete strangerEnv.PHAEDO_PAIRING;
-  const stranger = new Client({ name: 'phaedo-package-closure-stranger', version: '0.0.0' });
-  await stranger.connect(new StdioClientTransport({ command: process.execPath, args: [join(installed, 'server.js')], env: strangerEnv }));
-  const first = await stranger.callTool({ name: 'phaedo_request_injection', arguments: {} });
+  // Its log, too: stderr is what Claude Desktop's MCP log shows.
+  const startStranger = async (env) => {
+    const transport = new StdioClientTransport({ command: process.execPath, args: [join(installed, 'server.js')], env, stderr: 'pipe' });
+    let log = '';
+    transport.stderr.on('data', (d) => { log += d; });
+    const c = new Client({ name: 'phaedo-package-closure-stranger', version: '0.0.0' });
+    await c.connect(transport);
+    return { c, log: () => log };
+  };
+  const waitFor = async (pred, ms = 5000) => { const t0 = Date.now(); while (!pred() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 50)); return pred(); };
+
+  const stranger = await startStranger(strangerEnv);
+  const first = await stranger.c.callTool({ name: 'phaedo_request_injection', arguments: {} });
   ok(first.isError, 'unconfigured packed server does not hand back a profile');
   ok(first.content[0].text.includes('No Phaedo profile is set up'), 'unconfigured packed server says plainly there is no profile');
   ok(!first.content[0].text.includes('sample-0000'), 'unconfigured packed server never serves the sample');
-  await stranger.close();
+  ok(await waitFor(() => /\[phaedo-mcp\] no profile is set up on this computer/.test(stranger.log())),
+     'unconfigured packed server logs one line saying there is no profile');
+  await stranger.c.close();
+
+  // The phone-less path, in the published layout (capture modules from vendor/, not the repo):
+  // with Claude Code capture state on this computer, the packed server builds a starter profile
+  // from it rather than saying "no profile".
+  const starterState = join(tmp, 'starter-state');
+  const { emptyState, applySession, saveState } = await import('../capture/state.js');
+  saveState(join(starterState, 'capture-state.json'), applySession(emptyState(), 'cap_claude-code_closure01', 's1',
+    { behavioral_signals: { surface: { too_long: 4 } }, positive_count: 0, mental_models: {}, message_count: 12 },
+    { now: new Date().toISOString() }));
+  const starter = await startStranger({ ...strangerEnv, PHAEDO_MCP_STATE_DIR: starterState });
+  const st = await starter.c.callTool({ name: 'phaedo_request_injection', arguments: {} });
+  const stPayload = st.isError ? null : (st.structuredContent || JSON.parse(st.content[0].text));
+  ok(stPayload && stPayload.fingerprint_id === 'starter-local', 'packed server serves a starter profile from local capture');
+  ok(stPayload && stPayload.projection.includes('Response length: short'), 'the starter profile carries what was captured');
+  ok(await waitFor(() => /\[phaedo-mcp\] no phone paired; using a starter profile/.test(starter.log())),
+     'packed server logs that it is using a starter profile');
+  await starter.c.close();
 } finally {
   rmSync(tmp, { recursive: true, force: true });
 }
