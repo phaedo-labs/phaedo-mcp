@@ -18,7 +18,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert';
 
-import { loadFingerprint, sourceOf, profileStatusLine, NO_PROFILE_MESSAGE, STARTER_FINGERPRINT_ID } from './fingerprint-source.js';
+import { loadFingerprint, sourceOf, profileStatusLine, summarizeStarter, NO_PROFILE_MESSAGE, STARTER_FINGERPRINT_ID } from './fingerprint-source.js';
 import { buildInjectionResponse } from './projection.js';
 import { PhaedoError } from './errors.js';
 import { emptyState, applySession, saveState, defaultStatePath } from '../capture/state.js';
@@ -74,7 +74,28 @@ try {
     ok(/preliminary/.test(r.projection), 'the injection labels it preliminary — thin by construction, and says so');
 
     const line = await profileStatusLine(empty);
-    ok(/starter profile built from your own sessions/.test(line || ''), 'startup note: says a starter profile is in use');
+    ok(/using a starter profile from your own sessions/.test(line || ''), 'startup note: says a starter profile is in use');
+    ok(/1 thing learned across 1 area from 1 session — just getting started/.test(line || ''),
+       'startup note: says how much it has learned, and that it is early (one trait, one session)');
+    ok(!/\n/.test(line || ''), 'startup note: still one line');
+
+    // It grows: more traits and sessions move it along, and only a solid start points to the phone.
+    let st = emptyState();
+    const many = { behavioral_signals: { surface: { too_long: 4, no_headers: 3, too_formal: 2 }, behavioral: { wants_options: 2 } }, positive_count: 0, mental_models: {}, message_count: 20 };
+    for (let i = 1; i <= 3; i++) st = applySession(st, 'cap_claude-code_test1234', `s${i}`, many, { now: NOW });
+    saveState(defaultStatePath(), st);
+    const grown = await summarizeStarter(await loadFingerprint(empty));
+    ok(grown.sessions === 3, 'the summary counts captured sessions');
+    ok(grown.learned >= 1 && grown.areas >= 1, `the summary counts traits and areas (${grown.learned} in ${grown.areas})`);
+    const fake = (n) => ({ phaedo_fingerprint: { layers: { surface: { signals: Array.from({ length: n }, (_, i) => ({ field: `f${i}`, source: 'delta' })) } } } });
+    ok((await summarizeStarter(fake(2))).stage.startsWith('just getting started'), '< 3 traits → just getting started');
+    ok((await summarizeStarter(fake(5))).stage.startsWith('taking shape'), '3–7 traits → taking shape');
+    const solid = await summarizeStarter(fake(8));
+    ok(solid.stage.startsWith('a solid start') && /phone app/.test(solid.stage), '8+ traits → a solid start, and only then the phone app');
+    ok(!/phone app/.test((await summarizeStarter(fake(5))).stage), 'before that, it does not push the phone app');
+    const dup = { phaedo_fingerprint: { layers: { surface: { signals: [{ field: 'a' }, { field: 'a' }, { field: 'b' }] } } } };
+    ok((await summarizeStarter(dup)).learned === 2, 'repeat observations of one trait count once');
+    saveState(defaultStatePath(), applySession(emptyState(), 'cap_claude-code_test1234', 'session-1', counts, { now: NOW }));
 
     // A real fingerprint.json still wins over the starter (it is a profile the user put there).
     writeFileSync(join(empty, 'fingerprint.json'), JSON.stringify({ phaedo_fingerprint: { fingerprint_id: 'fp-file', updated_at: NOW, layers: {} } }));

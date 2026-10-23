@@ -53,6 +53,23 @@ async function localSnapshots(now) {
   return out;
 }
 
+// How many captured sessions the local state holds, across every surface: the live ones plus
+// those evicted into the baseline (their counts are still in it). For the starter-profile
+// readout only; 0 on any failure — it describes, it never gates.
+export async function localCaptureSessionCount() {
+  try {
+    const stateMod = await loadCaptureModule('capture/state.js');
+    const state = stateMod.loadState(stateMod.defaultStatePath());
+    let n = 0;
+    for (const s of Object.values(state.surfaces || {})) {
+      n += Object.keys((s && s.sessions) || {}).length + (Array.isArray(s && s.evicted) ? s.evicted.length : 0);
+    }
+    return n;
+  } catch {
+    return 0;
+  }
+}
+
 // Fold the local capture state into a vault payload's fingerprint and return the
 // folded payload (or the input unchanged when there is nothing to fold / the
 // modules are unavailable). Pure with respect to the input object.

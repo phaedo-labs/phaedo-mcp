@@ -1,6 +1,19 @@
 # Changelog — phaedo-mcp
 
-## 0.3.3 — unreleased
+## 0.3.4 — unreleased
+
+### The starter profile says how far along it is
+
+- **The startup line now reports progress** — how many things it has learned, across how many
+  areas, from how many sessions, and what that means:
+  "…9 things learned across 4 areas from 23 sessions — a solid start. The Phaedo phone app adds
+  what sessions can't show." It is "just getting started" below 3 traits, "taking shape" from 3,
+  and "a solid start" from 8; only that last one points to the phone app. Traits count once
+  however often they were seen.
+- `npm run pull` prints the same summary for a starter profile.
+- Tests: `test-no-profile.mjs` 24 → 33 (the readout, each stage, de-duplication, session count).
+
+## 0.3.3 — 2026-10-20
 
 ### A starter profile without the phone
 

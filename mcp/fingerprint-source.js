@@ -15,7 +15,7 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { hasPairingRecord, loadPairingRecord, loadFingerprintFromPhone, PhoneError } from './phone-source.js';
 import { defaultStateDir, writeCache, readCache, clearCache } from './cache.js';
-import { foldLocalCapture, isLocalCaptureOwner } from './capture-local.js';
+import { foldLocalCapture, isLocalCaptureOwner, localCaptureSessionCount } from './capture-local.js';
 import { Capabilities, AuthoredSource } from './lib/phaedo-crypto.js';
 import { PhaedoError } from './errors.js';
 
@@ -137,6 +137,33 @@ async function loadStarterProfile(now = new Date().toISOString()) {
   return markStarter(foldConfigHome(normalizeIdentity(vd)));
 }
 
+// HOW FAR ALONG a starter profile is, in words a person can act on. "Learned" counts distinct
+// traits (layer + field), not observations: ten corrections about length are one thing learned.
+// The stages are about what to do next, which is the point of saying it at all: early on, keep
+// working; once it is a solid start, the phone app is what adds the rest (its interview and the
+// decisions the subject approves, which sessions cannot show). Cut-offs are deliberately coarse
+// and are not a confidence measure — the projection's own confidence section is that.
+export const STARTER_STAGES = [
+  { min: 8, text: 'a solid start. The Phaedo phone app adds what sessions can\'t show (https://phaedo.so).' },
+  { min: 3, text: 'taking shape; it keeps learning as you work.' },
+  { min: 0, text: 'just getting started; it fills in as you work.' },
+];
+
+export async function summarizeStarter(vd) {
+  const layers = (vd && vd.phaedo_fingerprint && vd.phaedo_fingerprint.layers) || {};
+  const traits = new Set();
+  let areas = 0;
+  for (const [id, layer] of Object.entries(layers)) {
+    const sigs = (layer && Array.isArray(layer.signals)) ? layer.signals : [];
+    if (sigs.length) areas++;
+    for (const sg of sigs) if (sg && sg.field) traits.add(`${id}.${sg.field}`);
+  }
+  const learned = traits.size;
+  const sessions = await localCaptureSessionCount();
+  const stage = STARTER_STAGES.find((st) => learned >= st.min).text;
+  return { learned, areas, sessions, stage };
+}
+
 /** One line for the server log describing where the profile will come from, or null when there
  *  is nothing a person needs told. Never touches the phone: a pull at startup would put an
  *  "authorize" card on it with nobody asking. */
@@ -146,7 +173,13 @@ export async function profileStatusLine(baseDir) {
   if (env) return null;
   if (hasPairingRecord(baseDir)) return null;
   if (existsSync(resolve(baseDir, 'fingerprint.json'))) return null;
-  if (await loadStarterProfile()) return 'no phone paired; using a starter profile built from your own sessions on this computer.';
+  const starter = await loadStarterProfile();
+  if (starter) {
+    const { learned, areas, sessions, stage } = await summarizeStarter(starter);
+    return `no phone paired; using a starter profile from your own sessions on this computer: ` +
+      `${learned} thing${learned === 1 ? '' : 's'} learned across ${areas} area${areas === 1 ? '' : 's'}` +
+      `${sessions ? ` from ${sessions} session${sessions === 1 ? '' : 's'}` : ''} — ${stage}`;
+  }
   return NO_PROFILE_LOG;
 }
 

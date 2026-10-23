@@ -7,12 +7,12 @@
 
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { loadFingerprint, sourceOf } from './fingerprint-source.js';
+import { loadFingerprint, sourceOf, summarizeStarter } from './fingerprint-source.js';
 
 const BASE_DIR = dirname(fileURLToPath(import.meta.url));
 
 loadFingerprint(BASE_DIR)
-  .then((vd) => {
+  .then(async (vd) => {
     const fp = (vd && vd.phaedo_fingerprint) || {};
     const layers = fp.layers ? Object.keys(fp.layers).length : 0;
     const src = sourceOf(vd);
@@ -22,8 +22,10 @@ loadFingerprint(BASE_DIR)
     // whole point of this command is to verify the pairing works, so it has to distinguish
     // "your phone answered" from "your phone didn't, here's an old copy".
     if (src.starter) {
+      const { learned, areas, sessions, stage } = await summarizeStarter(vd);
       process.stdout.write(
-        `✓ No phone paired — serving a starter profile built from your own sessions on this computer, ${layers} layer(s).\n` +
+        `✓ No phone paired — serving a starter profile from your own sessions on this computer:\n` +
+        `  ${learned} thing(s) learned across ${areas} area(s)${sessions ? ` from ${sessions} session(s)` : ''} — ${stage}\n` +
         `  Pair the Phaedo phone app (npm run pair) to replace it with your full profile.\n`
       );
       process.exit(0);
