@@ -55,6 +55,8 @@ try {
     ok(manifest.version === pkg.version, `plugin version follows the package (${pkg.version}), so a release updates users`);
     ok(manifest.description && manifest.author?.name && manifest.license === 'Apache-2.0', 'description, author and license are set');
     ok(existsSync(join(out, manifest.icon)), 'the icon the listing names exists');
+    ok(manifest.privacyPolicyUrl === 'https://phaedo.so/privacy' && manifest.termsOfServiceUrl === 'https://phaedo.so/terms',
+      'the listing links the published privacy policy and terms');
 
     const mcpCfg = JSON.parse(readFileSync(join(out, '.mcp.json'), 'utf8')).mcpServers.phaedo;
     ok(mcpCfg.command === 'node' && mcpCfg.args.length === 1, 'the MCP server starts as `node <file>`, no shell or launcher');
@@ -138,6 +140,7 @@ try {
     const m = mcpbManifest();
     ok(m.version === pkg.version && m.server.entry_point === 'server.js', 'bundle manifest: version and entry point');
     ok(m.server.mcp_config.args[0] === '${__dirname}/server.js', 'bundle runs server.js from its own folder');
+    ok(m.privacy_policies?.[0] === 'https://phaedo.so/privacy', 'bundle links the privacy policy');
   }
 } finally {
   rmSync(tmp, { recursive: true, force: true });

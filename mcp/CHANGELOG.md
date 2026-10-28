@@ -1,6 +1,12 @@
 # Changelog — phaedo-mcp
 
-## 0.3.5 — unreleased
+## 0.3.6 — unreleased
+
+- The plugin and the Claude Desktop bundle link Phaedo's privacy policy and terms of service
+  (`https://phaedo.so/privacy`, `https://phaedo.so/terms`, published 2026-10-27 as drafts ahead of
+  counsel review). The Claude plugin directory listing reads them from `plugin.json`.
+
+## 0.3.5 — 2026-10-27
 
 ### Install in one step: a Claude Code plugin and a Claude Desktop bundle
 

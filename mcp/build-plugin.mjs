@@ -96,6 +96,8 @@ export function pluginManifest() {
     icon: './icon.png',
     documentationUrl: 'https://github.com/phaedo-labs/phaedo-mcp/tree/main/plugin#readme',
     supportUrl: 'https://github.com/phaedo-labs/phaedo-mcp/issues',
+    privacyPolicyUrl: 'https://phaedo.so/privacy',
+    termsOfServiceUrl: 'https://phaedo.so/terms',
   };
 }
 
@@ -125,6 +127,7 @@ export function mcpbManifest() {
     homepage: 'https://phaedo.so',
     repository: { type: 'git', url: 'https://github.com/phaedo-labs/phaedo-mcp' },
     support: 'https://github.com/phaedo-labs/phaedo-mcp/issues',
+    privacy_policies: ['https://phaedo.so/privacy'],
     license: 'Apache-2.0',
     icon: 'icon.png',
     server: {
