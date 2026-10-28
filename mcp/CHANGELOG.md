@@ -1,6 +1,23 @@
 # Changelog — phaedo-mcp
 
-## 0.3.6 — unreleased
+## 0.3.7 — unreleased
+
+### A directory edition of the Claude plugin
+
+- **`plugin-directory/`** in the public repo, the folder submitted to Claude's plugin directory.
+  Anthropic's directory policy says listed software must not read Claude's chat history or "use
+  conversation content to build user profiles", nor change Claude's behavior across sessions. This
+  edition therefore ships without the session hooks (profile at session start, session capture)
+  and without the capture and learning modules; it keeps the server and the merge check.
+- Its `install-layout.json` says `"edition": "directory"`, and the server then never builds the
+  starter profile from local capture counts, tells Claude to load the profile only when the user
+  asks (server instructions and the injection tool's description), and says "pair the phone app"
+  when there is no profile (`lib/config-dir.js isDirectoryEdition`).
+- The full plugin (`plugin/`, the `phaedo` marketplace) is unchanged.
+- `test-plugin.mjs` 57 → 77: the directory edition's files, hooks and manifest, and its server with
+  captured sessions present (still no profile, only-when-asked instructions).
+
+## 0.3.6 — 2026-10-27
 
 - The plugin and the Claude Desktop bundle link Phaedo's privacy policy and terms of service
   (`https://phaedo.so/privacy`, `https://phaedo.so/terms`, published 2026-10-27 as drafts ahead of

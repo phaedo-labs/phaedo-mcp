@@ -1,7 +1,7 @@
 {
   "name": "phaedo",
   "displayName": "Phaedo",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "Claude answers your way and checks with you before acting: loads your Phaedo profile at session start, asks before merges and deploys, sends decisions to your phone, and learns from your sessions.",
   "author": {
     "name": "Phaedo Labs",

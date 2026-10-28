@@ -129,6 +129,45 @@ try {
     ok(!existsSync(join(out, 'pairing.json')), 'nothing was written into the plugin folder');
   }
 
+  console.log('\nthe directory edition: no session learning, profile only when asked');
+  {
+    const dir = buildPlugin(join(tmp, 'plugin-directory'), { edition: 'directory' });
+    const drel = walk(dir).map((f) => relative(dir, f));
+    for (const gone of ['hooks/session-start.mjs', 'hooks/session-end.mjs', 'hooks/stop-capture.mjs', 'capture-a11y.js', 'capture-sync.js']) {
+      ok(!drel.includes(gone), `leaves out ${gone}`);
+    }
+    ok(!drel.some((r) => r.startsWith('vendor/capture/') || r.startsWith('vendor/extraction/')), 'leaves out the transcript parser and the learning modules');
+    const dhooks = JSON.parse(readFileSync(join(dir, 'hooks', 'hooks.json'), 'utf8')).hooks;
+    ok(JSON.stringify(Object.keys(dhooks).sort()) === JSON.stringify([...SHIP_HOOK_EVENTS].sort()), 'wires only the merge check, no session hooks');
+    for (const h of Object.values(dhooks).flat().flatMap((g) => g.hooks)) ok(existsSync(h.args[0].replace('${CLAUDE_PLUGIN_ROOT}', dir)), `hook script exists: ${h.args[0]}`);
+    ok(JSON.parse(readFileSync(join(dir, LAYOUT_MARKER), 'utf8')).edition === 'directory', 'its marker says directory edition');
+    const dpkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+    ok(!dpkg.scripts && !dpkg.files && JSON.stringify(dpkg.dependencies) === JSON.stringify(pkg.dependencies), 'its package.json carries only what the install and runtime read');
+    const dman = JSON.parse(readFileSync(join(dir, '.claude-plugin', 'plugin.json'), 'utf8'));
+    ok(dman.name === 'phaedo' && !/learns from your sessions/.test(dman.description), 'manifest: same name, no session-learning claim');
+    ok(/doesn't read your conversations/.test(readFileSync(join(dir, 'README.md'), 'utf8')), 'README says it reads no conversations');
+
+    // With captured sessions on the machine, the directory edition still builds no profile from them.
+    symlinkSync(join(MCP, 'node_modules'), join(dir, 'node_modules'), 'dir');
+    const stateDir = join(tmp, 'dir-state');
+    const { emptyState, applySession, saveState } = await import('../capture/state.js');
+    saveState(join(stateDir, 'capture-state.json'), applySession(emptyState(), 'cap_claude-code_dirtest01', 's1',
+      { behavioral_signals: { surface: { too_long: 4 } }, positive_count: 0, mental_models: {}, message_count: 12 }, { now: new Date().toISOString() }));
+    const env = { ...process.env, CLAUDE_PLUGIN_ROOT: dir, PHAEDO_MCP_STATE_DIR: stateDir };
+    delete env.PHAEDO_PAIRING; delete env.PHAEDO_FINGERPRINT; delete env.PHAEDO_CONFIG_DIR;
+    const client = new Client({ name: 'phaedo-plugin-test-dir', version: '0.0.0' });
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(dir, 'server.js')], env, stderr: 'pipe' }));
+    ok(/Don't load it unasked/.test(client.getInstructions() || '') && !/At the start of a session/.test(client.getInstructions() || ''),
+      'server instructions: load the profile only when the user asks');
+    const tools = (await client.listTools()).tools;
+    ok(tools.length === 8, 'same 8 tools');
+    ok(/only when the user asks/.test(tools.find((t) => t.name === 'phaedo_request_injection').description), 'the injection tool says: only when asked');
+    const r = await client.callTool({ name: 'phaedo_request_injection', arguments: {} });
+    ok(r.isError && /pair it with \/phaedo:pair/.test(r.content[0].text), 'captured sessions present, still no profile: it points to the phone app');
+    ok(!/starter-local/.test(r.content[0].text), 'never the starter profile');
+    await client.close();
+  }
+
   console.log('\nthe Desktop bundle');
   {
     const server = readFileSync(join(MCP, 'server.js'), 'utf8');

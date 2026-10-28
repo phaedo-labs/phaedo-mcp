@@ -64,37 +64,59 @@ function clean(dir) {
   }
 }
 
-export function buildPlugin(outDir) {
+// THE DIRECTORY EDITION (plugin-directory/ in the public repo, the folder submitted to Claude's
+// plugin directory). Anthropic's directory policy bars reading Claude's chat history to build a
+// profile and changing Claude's behavior across sessions, so this edition leaves out every
+// transcript reader and the session hooks, and its marker switches off the starter profile and
+// the "load at session start" instruction (lib/config-dir.js). plugin-src-directory/ overlays
+// plugin-src/ with its own hooks (the merge check only), status skill and README.
+const DIRECTORY_LEAVE_OUT = [
+  'hooks/session-start.mjs', 'hooks/session-end.mjs', 'hooks/stop-capture.mjs',
+  'capture-a11y.js', 'capture-sync.js', 'vendor/capture', 'vendor/extraction', 'vendored-files.mjs',
+];
+
+export function buildPlugin(outDir, { edition = 'full' } = {}) {
   const { dir, cleanup } = packContents();
   try {
     rmSync(outDir, { recursive: true, force: true });
     cpSync(dir, outDir, { recursive: true });
     cpSync(join(MCP, 'plugin-src'), outDir, { recursive: true });       // hooks.json, .mcp.json, skills, README
+    if (edition === 'directory') {
+      for (const p of DIRECTORY_LEAVE_OUT) rmSync(join(outDir, p), { recursive: true, force: true });
+      cpSync(join(MCP, 'plugin-src-directory'), outDir, { recursive: true });
+      writeFileSync(join(outDir, LAYOUT_MARKER), JSON.stringify({ config: 'state-dir', edition: 'directory' }, null, 2) + '\n');
+      // Only what the runtime and the dependency install read: the package's scripts and file list
+      // name the capture hooks this edition doesn't ship.
+      const { name, version, description, license, type, homepage, repository, dependencies } = pkg;
+      writeFileSync(join(outDir, 'package.json'), JSON.stringify({ name, version, description, license, type, homepage, repository, dependencies }, null, 2) + '\n');
+    }
     cpSync(join(MCP, 'package-lock.json'), join(outDir, 'package-lock.json'));
     cpSync(join(MCP, 'LICENSE'), join(outDir, 'LICENSE'));
     cpSync(join(ROOT, 'icons', 'phaedo_icon128.png'), join(outDir, 'icon.png'));
     mkdirSync(join(outDir, '.claude-plugin'), { recursive: true });
-    writeFileSync(join(outDir, '.claude-plugin', 'plugin.json'), JSON.stringify(pluginManifest(), null, 2) + '\n');
+    writeFileSync(join(outDir, '.claude-plugin', 'plugin.json'), JSON.stringify(pluginManifest({ edition }), null, 2) + '\n');
     clean(outDir);
   } finally { cleanup(); }
   return outDir;
 }
 
-export function pluginManifest() {
+export function pluginManifest({ edition = 'full' } = {}) {
   return {
     name: 'phaedo',
     displayName: 'Phaedo',
     version: pkg.version,
-    description:
-      'Claude answers your way and checks with you before acting: loads your Phaedo profile at session start, ' +
-      'asks before merges and deploys, sends decisions to your phone, and learns from your sessions.',
+    description: edition === 'directory'
+      ? 'Claude checks with you before acting: asks Phaedo before merges and deploys, sends decisions to your ' +
+        'phone to approve, and signs spending approvals with Face ID. Loads your Phaedo profile when you ask.'
+      : 'Claude answers your way and checks with you before acting: loads your Phaedo profile at session start, ' +
+        'asks before merges and deploys, sends decisions to your phone, and learns from your sessions.',
     author: { name: 'Phaedo Labs', email: 'hello@phaedo.so', url: 'https://phaedo.so' },
     homepage: 'https://phaedo.so',
     repository: 'https://github.com/phaedo-labs/phaedo-mcp',
     license: 'Apache-2.0',
     keywords: ['personalization', 'preferences', 'approvals', 'human-in-the-loop', 'guardrails', 'mcp'],
     icon: './icon.png',
-    documentationUrl: 'https://github.com/phaedo-labs/phaedo-mcp/tree/main/plugin#readme',
+    documentationUrl: `https://github.com/phaedo-labs/phaedo-mcp/tree/main/${edition === 'directory' ? 'plugin-directory' : 'plugin'}#readme`,
     supportUrl: 'https://github.com/phaedo-labs/phaedo-mcp/issues',
     privacyPolicyUrl: 'https://phaedo.so/privacy',
     termsOfServiceUrl: 'https://phaedo.so/terms',
@@ -189,6 +211,7 @@ export function buildMcpb(outFile) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [kind, out] = process.argv.slice(2);
   if (kind === 'plugin' && out) console.log(`✓ plugin → ${buildPlugin(resolve(out))}`);
+  else if (kind === 'plugin-directory' && out) console.log(`✓ directory plugin → ${buildPlugin(resolve(out), { edition: 'directory' })}`);
   else if (kind === 'mcpb' && out) console.log(`✓ mcpb → ${buildMcpb(out)}`);
-  else { console.error('usage: node build-plugin.mjs plugin <outDir> | mcpb <outFile>'); process.exit(2); }
+  else { console.error('usage: node build-plugin.mjs plugin <outDir> | plugin-directory <outDir> | mcpb <outFile>'); process.exit(2); }
 }

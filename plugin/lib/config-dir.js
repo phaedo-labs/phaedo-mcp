@@ -22,18 +22,35 @@ export const LAYOUT_MARKER = 'install-layout.json';
 
 const cache = new Map();
 
-/** True when the package at `baseDir` is a packaged install (plugin or Desktop bundle). */
-export function isPackagedInstall(baseDir) {
+function readLayout(baseDir) {
   const key = resolve(baseDir);
   if (!cache.has(key)) {
-    let packaged = false;
+    let layout = null;
     try {
       const marker = join(key, LAYOUT_MARKER);
-      packaged = existsSync(marker) && JSON.parse(readFileSync(marker, 'utf8'))?.config === 'state-dir';
-    } catch { packaged = false; }   // an unreadable marker → the old, beside-the-server layout
-    cache.set(key, packaged);
+      if (existsSync(marker)) layout = JSON.parse(readFileSync(marker, 'utf8'));
+    } catch { layout = null; }   // an unreadable marker → the old, beside-the-server layout
+    cache.set(key, layout && typeof layout === 'object' ? layout : null);
   }
   return cache.get(key);
+}
+
+/** True when the package at `baseDir` is a packaged install (plugin or Desktop bundle). */
+export function isPackagedInstall(baseDir) {
+  return readLayout(baseDir)?.config === 'state-dir';
+}
+
+// THE DIRECTORY EDITION. Anthropic's directory policy says listed software must not read
+// Claude's chat history or "use conversation content to build user profiles", nor "make any
+// changes to Claude's behavior across sessions". The plugin built for the directory therefore
+// leaves out every transcript reader (the session hooks and the capture modules), and this
+// flag turns off the two server paths that would still use conversation-derived data or apply
+// the profile unasked: the starter profile folded from local capture counts, and the "load the
+// profile at session start" instruction. The profile then comes only from the paired phone app,
+// and loads when the user asks for it. Everything else — consult, escalate, sign, the merge
+// check — is the same server.
+export function isDirectoryEdition(baseDir) {
+  return readLayout(baseDir)?.edition === 'directory';
 }
 
 export function configDir(baseDir, env = process.env) {

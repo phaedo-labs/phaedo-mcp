@@ -17,7 +17,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
 import { loadFingerprint, sourceOf, profileStatusLine } from './fingerprint-source.js';
-import { configDir } from './lib/config-dir.js';
+import { configDir, isDirectoryEdition } from './lib/config-dir.js';
 import { hasPairingRecord, loadPairingRecord } from './phone-source.js';
 import { depositDelegationSuggestions } from './delegation-sync.js';
 import { depositReceiptsDigest, drainAndApplyMarks } from './receipts-sync.js';
@@ -195,9 +195,13 @@ const PKG_VERSION = JSON.parse(readFileSync(join(BASE_DIR, 'package.json'), 'utf
 // tool descriptions and nothing saying "load the profile first" or "consult before you ship" —
 // so whether Phaedo was used at all depended on the model guessing. Short on purpose: clients
 // put this in the model's context on every turn.
+// The directory edition loads the profile only when asked (lib/config-dir.js explains why).
+const DIRECTORY_EDITION = isDirectoryEdition(BASE_DIR);
 const SERVER_INSTRUCTIONS = [
   'Phaedo holds the user\'s profile: how they like answers written, and how they want decisions handled when an AI acts for them.',
-  '- At the start of a session, call phaedo_request_injection once and treat the returned projection as background on the user\'s style.',
+  DIRECTORY_EDITION
+    ? '- When the user asks to load their Phaedo profile, call phaedo_request_injection and treat the returned projection as background on the user\'s style. Don\'t load it unasked.'
+    : '- At the start of a session, call phaedo_request_injection once and treat the returned projection as background on the user\'s style.',
   '- Before a consequential action for the user (merging, deploying, publishing, sending a message, spending money, deleting, changing an account or setting), call phaedo_consult and follow its signal. If you are acting on your own and the decision should be the user\'s, use phaedo_escalate and do not proceed until it resolves.',
   '- When the user reacts to an action you consulted on, call phaedo_record_outcome with its receipt_id: record what they chose, never what you inferred.',
   '- If a tool says no Phaedo profile is set up, tell the user once, plainly, and carry on normally. Do not retry.',
@@ -209,10 +213,12 @@ server.registerTool(
   'phaedo_request_injection',
   {
     title: 'Request a Phaedo fingerprint injection',
-    description:
-      "Returns the user's Phaedo cognitive-fingerprint projection as a system-prompt " +
-      'block to insert at the start of an AI session, so the assistant responds in the ' +
-      "user's style. Call once at session start and prepend the returned `projection`.",
+    description: DIRECTORY_EDITION
+      ? "Returns the user's Phaedo profile as a block to use as background on their style. " +
+        'Call it only when the user asks to load their Phaedo profile.'
+      : "Returns the user's Phaedo cognitive-fingerprint projection as a system-prompt " +
+        'block to insert at the start of an AI session, so the assistant responds in the ' +
+        "user's style. Call once at session start and prepend the returned `projection`.",
     inputSchema: {
       session_context: z
         .object({

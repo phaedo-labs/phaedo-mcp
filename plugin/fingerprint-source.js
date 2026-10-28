@@ -18,7 +18,7 @@ import { defaultStateDir, writeCache, readCache, clearCache } from './cache.js';
 import { foldLocalCapture, isLocalCaptureOwner, localCaptureSessionCount } from './capture-local.js';
 import { Capabilities, AuthoredSource } from './lib/phaedo-crypto.js';
 import { PhaedoError } from './errors.js';
-import { configDir } from './lib/config-dir.js';
+import { configDir, isDirectoryEdition } from './lib/config-dir.js';
 
 // §4.1 protocol-identity normalization (consumer defense-in-depth, 2026-06-16).
 // A stored fingerprint from a producer that predates identity stamping (or whose
@@ -118,7 +118,14 @@ export const PLUGIN_NO_PROFILE_MESSAGE =
   'loads at the start of the next one. For your full profile, pair the Phaedo phone app with ' +
   '/phaedo:pair (the app is not open to the public yet; https://phaedo.so to hear when it is).';
 
-export function noProfileMessage(env = process.env) {
+// The directory edition learns nothing from sessions, so it can't promise a starter profile.
+export const DIRECTORY_NO_PROFILE_MESSAGE =
+  'No Phaedo profile is set up yet, so Phaedo has not changed how the assistant responds. Your ' +
+  'profile comes from the Phaedo phone app: pair it with /phaedo:pair (the app is not open to the ' +
+  'public yet; https://phaedo.so to hear when it is).';
+
+export function noProfileMessage(env = process.env, baseDir = null) {
+  if (baseDir && isDirectoryEdition(baseDir)) return DIRECTORY_NO_PROFILE_MESSAGE;
   return env.CLAUDE_PLUGIN_ROOT ? PLUGIN_NO_PROFILE_MESSAGE : NO_PROFILE_MESSAGE;
 }
 
@@ -127,6 +134,7 @@ const NO_PROFILE_LOG =
   'no profile is set up on this computer, so Phaedo will not change how the assistant responds. ' +
   'Pair the Phaedo phone app, install the Claude Code hook to start one from your own sessions, ' +
   'or set PHAEDO_FINGERPRINT=sample to try the example.';
+const DIRECTORY_NO_PROFILE_LOG = 'no profile yet; pair the Phaedo phone app with /phaedo:pair.';
 const PLUGIN_NO_PROFILE_LOG =
   'no profile yet; one starts from your Claude Code sessions on this computer, or pair the phone app with /phaedo:pair.';
 
@@ -144,7 +152,8 @@ const PLUGIN_NO_PROFILE_LOG =
 // phone later replaces it (the phone inherits the cumulative counts — capture-local.js §5).
 export const STARTER_FINGERPRINT_ID = 'starter-local';
 
-async function loadStarterProfile(now = new Date().toISOString()) {
+async function loadStarterProfile(now = new Date().toISOString(), baseDir = null) {
+  if (baseDir && isDirectoryEdition(baseDir)) return null;   // nothing is learned from sessions there
   if (!await isLocalCaptureOwner(false)) return null;
   const base = { phaedo_fingerprint: { fingerprint_id: STARTER_FINGERPRINT_ID, updated_at: now, layers: {} } };
   const vd = await foldLocalCapture(base, { now });
@@ -189,13 +198,14 @@ export async function profileStatusLine(baseDir) {
   if (env) return null;
   if (hasPairingRecord(baseDir)) return null;
   if (existsSync(resolve(configDir(baseDir), 'fingerprint.json'))) return null;
-  const starter = await loadStarterProfile();
+  const starter = await loadStarterProfile(undefined, baseDir);
   if (starter) {
     const { learned, areas, sessions, stage } = await summarizeStarter(starter);
     return `no phone paired; using a starter profile from your own sessions on this computer: ` +
       `${learned} thing${learned === 1 ? '' : 's'} learned across ${areas} area${areas === 1 ? '' : 's'}` +
       `${sessions ? ` from ${sessions} session${sessions === 1 ? '' : 's'}` : ''} — ${stage}`;
   }
+  if (isDirectoryEdition(baseDir)) return DIRECTORY_NO_PROFILE_LOG;
   return process.env.CLAUDE_PLUGIN_ROOT ? PLUGIN_NO_PROFILE_LOG : NO_PROFILE_LOG;
 }
 
@@ -287,9 +297,9 @@ export async function loadFingerprint(baseDir) {
     // Only the default location may be absent quietly. A path the user NAMED that doesn't
     // read is their mistake to see, not "no profile".
     if (!process.env.PHAEDO_FINGERPRINT && err?.code === 'ENOENT') {
-      const starter = await loadStarterProfile();
+      const starter = await loadStarterProfile(undefined, baseDir);
       if (starter) return starter;
-      throw new PhaedoError('decryption_failed', noProfileMessage());
+      throw new PhaedoError('decryption_failed', noProfileMessage(process.env, baseDir));
     }
     throw new PhaedoError('decryption_failed', `Could not read the Phaedo profile at ${path} (${err?.code || err?.message || err}).`);
   }
@@ -304,7 +314,7 @@ export async function loadFingerprint(baseDir) {
   // persistence, idempotent). Owner-gated: a paired setup never reaches this
   // branch, and an explicit PHAEDO_FINGERPRINT ("use THIS file") stays verbatim —
   // it is the hermetic-test escape hatch.
-  if (!process.env.PHAEDO_FINGERPRINT && await isLocalCaptureOwner(hasPairingRecord(baseDir))) {
+  if (!process.env.PHAEDO_FINGERPRINT && !isDirectoryEdition(baseDir) && await isLocalCaptureOwner(hasPairingRecord(baseDir))) {
     return foldConfigHome(normalizeIdentity(await foldLocalCapture(vd)));
   }
   return foldConfigHome(normalizeIdentity(vd));
