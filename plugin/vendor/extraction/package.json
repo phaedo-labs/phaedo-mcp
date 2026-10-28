@@ -1,0 +1,4 @@
+{
+  "//": "Declares extraction/*.js as ES modules so Node (tests, the eval harness in scripts/local-model-eval) can import them directly. The extension itself loads these unbundled as ESM via manifest.json (service_worker type:module); browsers ignore package.json, so this is node-only and has no effect on the shipped extension.",
+  "type": "module"
+}

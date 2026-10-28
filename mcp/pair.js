@@ -12,14 +12,15 @@
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 import { pair } from './pairing.js';
+import { configDir } from './lib/config-dir.js';
 
 const BASE_DIR = dirname(fileURLToPath(import.meta.url));
 const identityPath = process.env.PHAEDO_IDENTITY
   ? resolve(process.cwd(), process.env.PHAEDO_IDENTITY)
-  : resolve(BASE_DIR, 'identity.json');
+  : resolve(configDir(BASE_DIR), 'identity.json');
 const pairingPath = process.env.PHAEDO_PAIRING
   ? resolve(process.cwd(), process.env.PHAEDO_PAIRING)
-  : resolve(BASE_DIR, 'pairing.json');
+  : resolve(configDir(BASE_DIR), 'pairing.json');
 
 pair({ identityPath, pairingPath, log: (m) => process.stdout.write(m + '\n') })
   .then(() => process.exit(0))

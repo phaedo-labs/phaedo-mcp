@@ -1,0 +1,36 @@
+{
+  "version": "0.1",
+  "_comment": "Standing AUTHORIZATIONS for phaedo_consult (§10.5): subject-authored rules that OVERRIDE the inferred signal. Force effects (escalate | require_human | decline | autoproceed) resolve the decision deterministically at confidence:1.0, deference:high; bias_cautious | bias_bold nudge one step. match: domains[] (substring, case-insensitive) · magnitude_min/max (low|medium|high) · reversible (true/false) · amount_gt (number; needs action_descriptor.amount). Portable: copy into the vault as phaedo_fingerprint.consult_policies, or point PHAEDO_CONSULT_POLICIES at this file to try them.",
+  "rules": [
+    {
+      "id": "irreversible-spend-over-5k-escalate",
+      "match": { "domains": ["financial", "payment", "spend", "purchase"], "reversible": false, "amount_gt": 5000 },
+      "effect": "escalate",
+      "note": "Any irreversible spend over $5,000 goes to me for a live decision"
+    },
+    {
+      "id": "irreversible-legal-escalate",
+      "match": { "domains": ["legal", "contract"], "reversible": false },
+      "effect": "escalate",
+      "note": "Irreversible legal or contract actions always go to a human"
+    },
+    {
+      "id": "autonomous-external-email-decline",
+      "match": { "domains": ["external email", "outbound email", "cold outreach"] },
+      "effect": "decline",
+      "note": "Do not send autonomous external email on my behalf"
+    },
+    {
+      "id": "low-stakes-writing-autoproceed",
+      "match": { "domains": ["writing", "draft", "internal note", "content"], "magnitude_max": "medium", "reversible": true },
+      "effect": "autoproceed",
+      "note": "Low-stakes, reversible writing is pre-approved"
+    },
+    {
+      "id": "people-matters-bias-cautious",
+      "match": { "domains": ["immigration", "hr", "personnel", "visa"] },
+      "effect": "bias_cautious",
+      "note": "Lean cautious on people / immigration matters"
+    }
+  ]
+}

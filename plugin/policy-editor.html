@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Phaedo — Consultation Deference Policies</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e3e3e3; --acc:#2b6cb0; --bg:#fafafa; --warn:#b45309; }
+  * { box-sizing: border-box; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--ink); margin: 0; background: var(--bg); }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 28px 20px 80px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--mut); margin: 0 0 20px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:16px; }
+  label { display:block; font-weight:600; font-size:13px; margin:10px 0 4px; }
+  .hint { color:var(--mut); font-weight:400; font-size:12px; }
+  input[type=text], select { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:7px; font-size:14px; background:#fff; }
+  .row { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+  .row2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  button { font:inherit; cursor:pointer; border-radius:7px; border:1px solid var(--line); background:#fff; padding:8px 14px; }
+  button.primary { background:var(--acc); color:#fff; border-color:var(--acc); font-weight:600; }
+  button.danger { color:#b00; border-color:#f0caca; }
+  .rules { list-style:none; padding:0; margin:0; }
+  .rule { border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:8px; display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+  .rule .desc { font-size:14px; }
+  .rule .meta { color:var(--mut); font-size:12px; margin-top:2px; }
+  .badge { display:inline-block; font-size:11px; font-weight:700; padding:1px 7px; border-radius:20px; background:#eef2f7; color:var(--acc); }
+  .badge.force { background:#fdecec; color:#b00; }
+  pre { background:#0f1419; color:#d7e0e8; padding:14px; border-radius:8px; overflow:auto; font-size:12.5px; }
+  .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
+  .ok { color:#1a7a3a; font-weight:600; }
+  code { background:#eef2f7; padding:1px 5px; border-radius:4px; font-size:12.5px; }
+  .steps { background:#fff8ec; border:1px solid #f0e0c0; border-radius:8px; padding:12px 16px; font-size:13.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Phaedo — Consultation deference policies</h1>
+  <p class="sub">Author standing rules that <strong>override</strong> what an agent infers about how you'd decide. e.g. <em>always escalate irreversible spend/legal</em>, <em>auto-proceed low-stakes writing</em>. Nothing here leaves this page until you save the file.</p>
+
+  <div class="card">
+    <strong>Add a rule</strong>
+    <label>When the action's domain contains any of <span class="hint">(comma-separated keywords; leave blank to match any domain)</span></label>
+    <input type="text" id="domains" placeholder="financial, payment, legal" />
+    <div class="row">
+      <div><label>Magnitude min</label><select id="magmin"><option value="">any</option><option>low</option><option>medium</option><option>high</option></select></div>
+      <div><label>Magnitude max</label><select id="magmax"><option value="">any</option><option>low</option><option>medium</option><option>high</option></select></div>
+      <div><label>Reversible?</label><select id="rev"><option value="">any</option><option value="true">reversible only</option><option value="false">irreversible only</option></select></div>
+    </div>
+    <div class="row2">
+      <div>
+        <label>Then…</label>
+        <select id="effect">
+          <option value="escalate">escalate — surface to a human</option>
+          <option value="decline">decline — refuse the action</option>
+          <option value="autoproceed">autoproceed — pre-approve</option>
+          <option value="require_human">require_human — (= escalate)</option>
+          <option value="bias_cautious">bias cautious — nudge one step safer</option>
+          <option value="bias_bold">bias bold — nudge one step bolder</option>
+        </select>
+      </div>
+      <div><label>Note <span class="hint">(shown to the agent as the reason)</span></label><input type="text" id="note" placeholder="Irreversible money goes to a human" /></div>
+    </div>
+    <div class="actions"><button class="primary" id="add">Add rule</button></div>
+  </div>
+
+  <div class="card">
+    <strong>Your rules</strong> <span class="hint">— first matching force-rule wins</span>
+    <ul class="rules" id="rules"></ul>
+    <p class="hint" id="empty">No rules yet.</p>
+  </div>
+
+  <div class="card">
+    <strong>consult-policies.json</strong>
+    <pre id="json"></pre>
+    <div class="actions">
+      <button class="primary" id="copy">Copy JSON</button>
+      <button id="download">Download consult-policies.json</button>
+      <span id="copied" class="ok" style="display:none">copied ✓</span>
+    </div>
+    <div class="steps" style="margin-top:12px">
+      <strong>To use it (desktop / MCP):</strong>
+      <ol style="margin:6px 0 0; padding-left:18px">
+        <li>Save the file as <code>~/phaedo/mcp/consult-policies.json</code> (the server auto-reads it — no env needed).</li>
+        <li>Restart your AI client (Cmd-Q Claude Desktop, or a new Claude Code session).</li>
+        <li>Call <code>phaedo_consult</code> for a matching action — the signal should reflect your rule, with the reason in <code>rationale_hint</code>.</li>
+      </ol>
+      <span class="hint">Portable alt: paste the <code>rules</code> into your vault under <code>phaedo_consult_policies</code> so they travel with you (authoring-in-app is a follow-up).</span>
+    </div>
+  </div>
+</div>
+
+<script>
+  const rules = [];
+  const $ = (id) => document.getElementById(id);
+  const val = (id) => $(id).value.trim();
+
+  function describe(r) {
+    const m = r.match || {};
+    const dom = (m.domains && m.domains.length) ? `domain ∈ {${m.domains.join(', ')}}` : 'any domain';
+    const mag = [m.magnitude_min ? `≥${m.magnitude_min}` : '', m.magnitude_max ? `≤${m.magnitude_max}` : ''].filter(Boolean).join(' ') || 'any magnitude';
+    const rev = (m.reversible === true) ? 'reversible' : (m.reversible === false) ? 'irreversible' : 'any reversibility';
+    return `${dom} · ${mag} · ${rev}`;
+  }
+  const FORCE = new Set(['escalate','decline','autoproceed','require_human']);
+
+  function render() {
+    const ul = $('rules'); ul.innerHTML = '';
+    $('empty').style.display = rules.length ? 'none' : 'block';
+    rules.forEach((r, i) => {
+      const li = document.createElement('li'); li.className = 'rule';
+      const left = document.createElement('div');
+      const badge = `<span class="badge ${FORCE.has(r.effect) ? 'force' : ''}">${r.effect}</span>`;
+      left.innerHTML = `<div class="desc">${badge} ${r.note ? r.note : ''}</div><div class="meta">${describe(r)}</div>`;
+      const rm = document.createElement('button'); rm.className = 'danger'; rm.textContent = 'Remove';
+      rm.onclick = () => { rules.splice(i, 1); render(); };
+      li.appendChild(left); li.appendChild(rm); ul.appendChild(li);
+    });
+    $('json').textContent = JSON.stringify(doc(), null, 2);
+  }
+  function doc() { return { version: '0.1', rules }; }
+
+  $('add').onclick = () => {
+    const match = {};
+    const domains = val('domains').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    if (domains.length) match.domains = domains;
+    if (val('magmin')) match.magnitude_min = val('magmin');
+    if (val('magmax')) match.magnitude_max = val('magmax');
+    if ($('rev').value) match.reversible = $('rev').value === 'true';
+    const rule = { id: 'rule-' + (rules.length + 1), match, effect: $('effect').value };
+    if (val('note')) rule.note = val('note');
+    rules.push(rule);
+    $('domains').value = ''; $('note').value = ''; $('magmin').value = ''; $('magmax').value = ''; $('rev').value = ''; $('effect').value = 'escalate';
+    render();
+  };
+  $('copy').onclick = async () => {
+    try { await navigator.clipboard.writeText(JSON.stringify(doc(), null, 2)); const c = $('copied'); c.style.display = 'inline'; setTimeout(() => c.style.display = 'none', 1500); } catch (e) {}
+  };
+  $('download').onclick = () => {
+    const blob = new Blob([JSON.stringify(doc(), null, 2)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'consult-policies.json'; a.click(); URL.revokeObjectURL(a.href);
+  };
+  render();
+</script>
+</body>
+</html>

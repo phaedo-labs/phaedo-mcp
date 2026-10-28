@@ -7,6 +7,7 @@
 // policies or delegation signals its own way would be the third time.
 
 import { join } from 'path';
+import { configDir } from './lib/config-dir.js';
 import { readFileSync, existsSync } from 'fs';
 import { loadFingerprint, loadFingerprintPreferCache } from './fingerprint-source.js';
 import { readServingClientId } from './phone-source.js';
@@ -24,7 +25,7 @@ export function buildConsultOpts(baseDir, env = process.env, { warn = (m) => pro
   // the server (mcp/consult-policies.json — what policy-editor.html produces). Zero
   // config: drop the file in and restart the client. (Portable vault policies in
   // phaedo_consult_policies always apply too, regardless of this file.)
-  const policiesPath = env.PHAEDO_CONSULT_POLICIES || join(baseDir, 'consult-policies.json');
+  const policiesPath = env.PHAEDO_CONSULT_POLICIES || join(configDir(baseDir, env), 'consult-policies.json');
   if (existsSync(policiesPath)) {
     try { opts.policies = JSON.parse(readFileSync(policiesPath, 'utf8')); }
     catch (e) { warn(`[phaedo-mcp] ignoring malformed consult policies (${policiesPath}): ${e.message}\n`); }

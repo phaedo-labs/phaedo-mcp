@@ -1,0 +1,25 @@
+{
+  "name": "phaedo",
+  "displayName": "Phaedo",
+  "version": "0.3.5",
+  "description": "Claude answers your way and checks with you before acting: loads your Phaedo profile at session start, asks before merges and deploys, sends decisions to your phone, and learns from your sessions.",
+  "author": {
+    "name": "Phaedo Labs",
+    "email": "hello@phaedo.so",
+    "url": "https://phaedo.so"
+  },
+  "homepage": "https://phaedo.so",
+  "repository": "https://github.com/phaedo-labs/phaedo-mcp",
+  "license": "Apache-2.0",
+  "keywords": [
+    "personalization",
+    "preferences",
+    "approvals",
+    "human-in-the-loop",
+    "guardrails",
+    "mcp"
+  ],
+  "icon": "./icon.png",
+  "documentationUrl": "https://github.com/phaedo-labs/phaedo-mcp/tree/main/plugin#readme",
+  "supportUrl": "https://github.com/phaedo-labs/phaedo-mcp/issues"
+}

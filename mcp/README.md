@@ -22,11 +22,45 @@ when your phone is offline, is encrypted too.
    - **the Phaedo phone app** — your full profile lives there. The app isn't open
      to the public yet; [phaedo.so](https://phaedo.so) has a link to hear when it is.
    - **your own Claude Code sessions** — no phone needed. Phaedo builds a starter
-     profile on this computer from how you work in Claude Code (see below).
-2. **Node.js**, free from [nodejs.org](https://nodejs.org) (the LTS button).
+     profile on this computer from how you work in Claude Code (see *Install*).
+2. **Node.js**, free from [nodejs.org](https://nodejs.org) (the LTS button), for
+   Claude Code and other apps. Claude Desktop brings its own.
 
 With neither, there is no profile, and the server says so plainly rather than
 guessing. You can still try Phaedo with a made-up example profile.
+
+## Install
+
+**Claude Code** (and Cowork) — run these two commands in Terminal:
+
+```bash
+claude plugin marketplace add phaedo-labs/phaedo-mcp
+```
+
+```bash
+claude plugin install phaedo@phaedo
+```
+
+Then start a new Claude Code session. That's all: Phaedo loads your profile at the
+start of each session, checks with you before Claude merges, deploys or publishes,
+and learns from how you work. Without the phone app, it builds a starter profile from
+your own sessions (for example, that you want short answers without headers). It
+starts thin and grows as you work. In Claude Code, type `/phaedo:status` to see how
+far along it is, and `/phaedo:pair` to pair the phone app.
+
+**Claude Desktop** — download
+[phaedo.mcpb](https://github.com/phaedo-labs/phaedo-mcp/raw/main/desktop/phaedo.mcpb)
+and double-click it. Claude Desktop shows what it installs and asks you to confirm.
+Node.js comes with Claude Desktop, so nothing else is needed. Desktop uses the same
+profile and pairing as the Claude Code plugin on this computer.
+
+**Other apps** (Cursor and others) — see *Use your own profile in other apps* below,
+or the manual setup under *Reference*.
+
+What Phaedo reads stays on this computer: each Claude Code session is reduced to
+counts (like "asked for a shorter answer, 4 times"), and the text itself is
+discarded. If you pair the phone app later, your full profile replaces the starter
+one and keeps what it learned.
 
 ## Try it with the example profile (no phone needed)
 
@@ -66,32 +100,7 @@ example, delete the `env` line in Claude Desktop, or in Claude Code run
 `claude mcp remove -s user phaedo` and add it again without `-e …`. The server
 will then tell you there's no profile until you pair your phone.
 
-## Start a profile from your Claude Code sessions (no phone needed)
-
-If you use Claude Code, Phaedo can learn from how you work there and build a
-starter profile on this computer — for example, that you want short answers
-without headers. It starts thin and grows as you work.
-
-1. **Get this folder** as in step 1 below (Code → Download ZIP, unzip, open the
-   `mcp` folder).
-2. **Install the Claude Code hook.** In Terminal, from the `mcp` folder:
-   ```bash
-   npm install
-   ```
-   ```bash
-   npm run setup:code-hook
-   ```
-   This adds Phaedo to your AI apps and turns on three things in Claude Code:
-   loading your profile when a session starts, checking with you before it merges
-   or publishes, and learning from your sessions.
-3. **Quit and reopen Claude Code**, then keep working. The first sessions build the
-   profile, and each later session picks up what's been learned.
-
-What it reads stays on this computer: each session is reduced to counts (like "asked
-for a shorter answer, 4 times"), and the text itself is discarded. If you pair the
-phone app later, your full profile replaces the starter one and keeps what it learned.
-
-## Use your own profile (with the phone app)
+## Use your own profile in other apps (with the phone app)
 
 1. **Get this folder.** On [the GitHub page](https://github.com/phaedo-labs/phaedo-mcp),
    click **Code → Download ZIP**, unzip it, and open the `mcp` folder inside.
@@ -102,7 +111,9 @@ phone app later, your full profile replaces the starter one and keeps what it le
    - Linux: run `bash installers/linux/install-phaedo-mcp.sh`.
 
    It adds Phaedo to Claude Desktop, Cursor and Claude Code — keeping your other
-   settings, and backing each file up first — then starts pairing.
+   settings, and backing each file up first — then starts pairing. (In Claude Code
+   and Claude Desktop, the plugin and the `.mcpb` above are simpler; use one route
+   per app, not both.)
 3. **Pair with your phone.** Open Phaedo on your phone. On the same Wi-Fi, approve
    **"Phaedo MCP Server"** and check that the code matches the one in Terminal.
    On a different network, tap **Pair with code** and type the code Terminal shows.

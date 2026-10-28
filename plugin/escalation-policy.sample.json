@@ -1,0 +1,13 @@
+{
+  "version": "0.1",
+  "_comment": "Subject-configurable PUSH policy for phaedo_escalate (docs/roadmap/escalation-and-push.md). Controls which consult signals WAKE your phone for a live decision. `escalate` ALWAYS pushes (it means a human is needed) and is not configurable here. Only `clarify` is tunable: mode is \"always\" | \"consequential\" (the default: irreversible OR high-magnitude actions only) | \"never\". A per-domain override (by_domain, substring match, case-insensitive) beats the default. Portable: copy into the vault as phaedo_fingerprint.escalation_policy to sync across devices, or point PHAEDO_ESCALATION_POLICY at this file to try it. The file overrides the vault policy.",
+  "clarify": {
+    "default": "consequential",
+    "by_domain": {
+      "financial": "always",
+      "legal": "always",
+      "writing": "never",
+      "internal note": "never"
+    }
+  }
+}

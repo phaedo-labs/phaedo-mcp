@@ -1,6 +1,29 @@
 # Changelog — phaedo-mcp
 
-## 0.3.4 — unreleased
+## 0.3.5 — unreleased
+
+### Install in one step: a Claude Code plugin and a Claude Desktop bundle
+
+- **Claude Code plugin** (`plugin/` in the public repo, listed by its root
+  `.claude-plugin/marketplace.json`): `claude plugin marketplace add phaedo-labs/phaedo-mcp`, then
+  `claude plugin install phaedo@phaedo`. It brings the MCP server and every Claude Code hook
+  (session-start profile, the merge/deploy check, session capture) with no installer, no JSON
+  editing and no settings changes; Claude Code installs the server's two dependencies from the
+  lockfile. Two skills: `/phaedo:status` and `/phaedo:pair`. The folder is the one to submit to
+  Claude's plugin directory.
+- **Claude Desktop bundle** (`desktop/phaedo.mcpb`, 0.6 MB): double-click to install. The npm
+  dependencies are bundled into one file, so there is no install step, and Desktop brings Node.
+- **Pairing survives updates.** Both packaged installs carry `install-layout.json` and keep the
+  pairing, identity and policy files in `~/.phaedo-mcp` (`lib/config-dir.js`) instead of beside
+  `server.js`, which an update replaces. The same folder for both, so one pairing covers Claude
+  Code and Desktop. A clone and the npm package are unchanged; `PHAEDO_CONFIG_DIR` overrides.
+- Inside the plugin, "no profile" says a starter profile builds from your sessions and how to
+  pair, instead of telling you to install a hook the plugin already is.
+- Built by `build-plugin.mjs` from `npm pack`, so all three ship the same files. Tested by
+  `test-plugin.mjs` (55): the directory's file limits, manifest, hooks, lockfile, and the built
+  plugin's server and SessionStart hook run with `CLAUDE_PLUGIN_ROOT` set.
+
+## 0.3.4 — 2026-10-22
 
 ### The starter profile says how far along it is
 

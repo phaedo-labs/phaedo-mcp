@@ -18,6 +18,7 @@ import { defaultStateDir, writeCache, readCache, clearCache } from './cache.js';
 import { foldLocalCapture, isLocalCaptureOwner, localCaptureSessionCount } from './capture-local.js';
 import { Capabilities, AuthoredSource } from './lib/phaedo-crypto.js';
 import { PhaedoError } from './errors.js';
+import { configDir } from './lib/config-dir.js';
 
 // §4.1 protocol-identity normalization (consumer defense-in-depth, 2026-06-16).
 // A stored fingerprint from a producer that predates identity stamping (or whose
@@ -95,7 +96,7 @@ function resolveSourcePath(baseDir) {
   const env = process.env.PHAEDO_FINGERPRINT;
   if (env === SAMPLE_KEYWORD) return SAMPLE_PATH;
   if (env) return resolve(process.cwd(), env);
-  return resolve(baseDir, 'fingerprint.json');
+  return resolve(configDir(baseDir), 'fingerprint.json');
 }
 
 // Read by the assistant (a tool error) and, through it, by the person — so plain words, and
@@ -108,11 +109,26 @@ export const NO_PROFILE_MESSAGE =
   'is installed (see the README). To try a made-up example profile instead, set ' +
   'PHAEDO_FINGERPRINT=sample in this server\'s settings.';
 
+// Inside the Claude plugin the Claude Code hook is already installed — the plugin is the hook —
+// so telling the person to install it would send them looking for a step that doesn't exist.
+// Claude Code exports CLAUDE_PLUGIN_ROOT to a plugin's MCP server and hooks, and to nothing else.
+export const PLUGIN_NO_PROFILE_MESSAGE =
+  'No Phaedo profile is set up yet, so Phaedo has not changed how the assistant responds. It ' +
+  'starts one from your own Claude Code sessions on this computer: after a session or two, it ' +
+  'loads at the start of the next one. For your full profile, pair the Phaedo phone app with ' +
+  '/phaedo:pair (the app is not open to the public yet; https://phaedo.so to hear when it is).';
+
+export function noProfileMessage(env = process.env) {
+  return env.CLAUDE_PLUGIN_ROOT ? PLUGIN_NO_PROFILE_MESSAGE : NO_PROFILE_MESSAGE;
+}
+
 // The same news for the server's log (Claude Desktop's MCP log shows stderr), one line.
 const NO_PROFILE_LOG =
   'no profile is set up on this computer, so Phaedo will not change how the assistant responds. ' +
   'Pair the Phaedo phone app, install the Claude Code hook to start one from your own sessions, ' +
   'or set PHAEDO_FINGERPRINT=sample to try the example.';
+const PLUGIN_NO_PROFILE_LOG =
+  'no profile yet; one starts from your Claude Code sessions on this computer, or pair the phone app with /phaedo:pair.';
 
 // STARTER PROFILE — the phone-less path.
 //
@@ -172,7 +188,7 @@ export async function profileStatusLine(baseDir) {
   if (env === SAMPLE_KEYWORD) return 'using the made-up example profile (PHAEDO_FINGERPRINT=sample).';
   if (env) return null;
   if (hasPairingRecord(baseDir)) return null;
-  if (existsSync(resolve(baseDir, 'fingerprint.json'))) return null;
+  if (existsSync(resolve(configDir(baseDir), 'fingerprint.json'))) return null;
   const starter = await loadStarterProfile();
   if (starter) {
     const { learned, areas, sessions, stage } = await summarizeStarter(starter);
@@ -180,7 +196,7 @@ export async function profileStatusLine(baseDir) {
       `${learned} thing${learned === 1 ? '' : 's'} learned across ${areas} area${areas === 1 ? '' : 's'}` +
       `${sessions ? ` from ${sessions} session${sessions === 1 ? '' : 's'}` : ''} — ${stage}`;
   }
-  return NO_PROFILE_LOG;
+  return process.env.CLAUDE_PLUGIN_ROOT ? PLUGIN_NO_PROFILE_LOG : NO_PROFILE_LOG;
 }
 
 // Returns the vault payload:
@@ -273,7 +289,7 @@ export async function loadFingerprint(baseDir) {
     if (!process.env.PHAEDO_FINGERPRINT && err?.code === 'ENOENT') {
       const starter = await loadStarterProfile();
       if (starter) return starter;
-      throw new PhaedoError('decryption_failed', NO_PROFILE_MESSAGE);
+      throw new PhaedoError('decryption_failed', noProfileMessage());
     }
     throw new PhaedoError('decryption_failed', `Could not read the Phaedo profile at ${path} (${err?.code || err?.message || err}).`);
   }

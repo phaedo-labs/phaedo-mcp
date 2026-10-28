@@ -24,31 +24,38 @@ any AI tool. This repo is the open half of that system:
 
 ## Quick start
 
-```bash
-npx phaedo-mcp        # run the server over stdio
-```
-
-Or wire it into Claude Desktop / Cursor / Claude Code automatically:
+**Claude Code** — install the plugin (it brings the server and the hooks):
 
 ```bash
-npm install -g phaedo-mcp
-cd "$(npm root -g)/phaedo-mcp" && npm run setup
+claude plugin marketplace add phaedo-labs/phaedo-mcp
 ```
+
+```bash
+claude plugin install phaedo@phaedo
+```
+
+**Claude Desktop** — download [`desktop/phaedo.mcpb`](desktop/phaedo.mcpb) and
+double-click it.
+
+**Anything else that speaks MCP** — `npx phaedo-mcp` runs the server over stdio.
 
 Your full fingerprint comes from the Phaedo phone app, learned on-device from
 your actual usage. The app isn't open to the public yet
-([phaedo.so](https://phaedo.so) has a link to hear when it is). Without it, if
-you use Claude Code, the server builds a **starter profile** on your computer
-from your own sessions (`npm run setup:code-hook`). With neither, it says
-plainly that there is no profile; it does not guess. To try it with a made-up
-example profile, set `PHAEDO_FINGERPRINT=sample`. See
-[`mcp/README.md`](mcp/README.md) for the full guide (the starter profile,
-trying the example, pairing, policies, receipts, the agreement metric).
+([phaedo.so](https://phaedo.so) has a link to hear when it is). Without it, the
+Claude Code plugin builds a **starter profile** on your computer from your own
+sessions. With neither, the server says plainly that there is no profile; it
+does not guess. To try it with a made-up example profile, set
+`PHAEDO_FINGERPRINT=sample`. See [`plugin/README.md`](plugin/README.md) for what
+the plugin runs, stores and sends, and [`mcp/README.md`](mcp/README.md) for the
+full guide (pairing, policies, receipts, the agreement metric).
 
 ## Design commitments
 
 - **User-owned & local.** The fingerprint lives on your devices, encrypted; the
-  server holds no plaintext at rest. Nothing is sent to any Phaedo service.
+  server holds no plaintext at rest. Nothing readable is sent to any Phaedo
+  service: with a paired phone, messages between your computer and your phone are
+  end-to-end encrypted, and the relay that carries them off your Wi-Fi can't read
+  them.
 - **Signals out, never structure.** Consultations return a signal + confidence —
   never fingerprint internals (spec §10.4).
 - **Honest abstention.** No coverage → `insufficient_signal`, not a confident guess.

@@ -1,0 +1,17 @@
+Phaedo
+Copyright 2026 Phaedo Labs, Inc.
+
+This product includes software developed by Phaedo Labs, Inc. (https://phaedo.so),
+licensed under the Apache License, Version 2.0.
+
+"Phaedo" and the Phaedo logo are trademarks of Phaedo Labs, Inc. The Apache License,
+Version 2.0 grants no trademark rights (Apache-2.0 §6); see TRADEMARKS for the brand
+policy and permitted nominative use.
+
+----------------------------------------------------------------------
+Third-party components (not redistributed in this package)
+----------------------------------------------------------------------
+The reference browser extension vendors @mlc-ai/web-llm (Apache-2.0). That bundle
+is NOT included in this npm package or the public repository (it is a gitignored
+build artifact). If/when the extension is distributed, the @mlc-ai/web-llm
+LICENSE and NOTICE travel with it.

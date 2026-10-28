@@ -23,6 +23,7 @@
 // after the one-time pairing.
 
 import { readFile } from 'fs/promises';
+import { configDir } from './lib/config-dir.js';
 import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import { Phaedo, b64uEnc, b64uDec, Capabilities } from './lib/phaedo-crypto.js';
@@ -55,7 +56,7 @@ const APPROVE_TIMEOUT_MS = 120000;   // human-in-the-loop: /v1/authorize
 export async function loadPairingRecord(baseDir) {
   const path = process.env.PHAEDO_PAIRING
     ? resolve(process.cwd(), process.env.PHAEDO_PAIRING)
-    : resolve(baseDir, 'pairing.json');
+    : resolve(configDir(baseDir), 'pairing.json');
   let raw;
   try {
     raw = await readFile(path, 'utf8');
@@ -78,7 +79,7 @@ export async function loadPairingRecord(baseDir) {
 // True iff a pairing record is configured (→ use the phone source over local JSON).
 export function hasPairingRecord(baseDir) {
   if (process.env.PHAEDO_PAIRING) return true;
-  return existsSync(resolve(baseDir, 'pairing.json'));
+  return existsSync(resolve(configDir(baseDir), 'pairing.json'));
 }
 
 // This server's OWN paired-client identifier — the identity §10.5 `agents` scoping
@@ -96,7 +97,7 @@ export function hasPairingRecord(baseDir) {
 export function readServingClientId(baseDir) {
   const path = process.env.PHAEDO_PAIRING
     ? resolve(process.cwd(), process.env.PHAEDO_PAIRING)
-    : resolve(baseDir, 'pairing.json');
+    : resolve(configDir(baseDir), 'pairing.json');
   try {
     const id = JSON.parse(readFileSync(path, 'utf8'))?.client_id;
     return typeof id === 'string' && id.trim() ? id.trim() : null;

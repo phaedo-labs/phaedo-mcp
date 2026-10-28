@@ -1,0 +1,16 @@
+{
+  "name": "phaedo",
+  "owner": {
+    "name": "Phaedo Labs",
+    "email": "hello@phaedo.so",
+    "url": "https://phaedo.so"
+  },
+  "description": "Phaedo: Claude answers your way and checks with you before acting.",
+  "plugins": [
+    {
+      "name": "phaedo",
+      "source": "./plugin",
+      "category": "productivity"
+    }
+  ]
+}

@@ -17,6 +17,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
 import { loadFingerprint, sourceOf, profileStatusLine } from './fingerprint-source.js';
+import { configDir } from './lib/config-dir.js';
 import { hasPairingRecord, loadPairingRecord } from './phone-source.js';
 import { depositDelegationSuggestions } from './delegation-sync.js';
 import { depositReceiptsDigest, drainAndApplyMarks } from './receipts-sync.js';
@@ -178,7 +179,7 @@ const ESCALATION_WINDOW_MS = (() => {
 // over the stakes-gated default. Local file (PHAEDO_ESCALATION_POLICY, else
 // mcp/escalation-policy.json beside the server) overrides; the portable vault policy
 // (phaedo_fingerprint.escalation_policy) is merged in per-call (loadEscalationPolicy).
-const ESCALATION_POLICY_PATH = process.env.PHAEDO_ESCALATION_POLICY || join(BASE_DIR, 'escalation-policy.json');
+const ESCALATION_POLICY_PATH = process.env.PHAEDO_ESCALATION_POLICY || join(configDir(BASE_DIR), 'escalation-policy.json');
 let ESCALATION_POLICY_FILE = null;
 if (existsSync(ESCALATION_POLICY_PATH)) {
   try { ESCALATION_POLICY_FILE = JSON.parse(readFileSync(ESCALATION_POLICY_PATH, 'utf8')); }
