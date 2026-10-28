@@ -8,8 +8,17 @@
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { loadFingerprint, sourceOf, summarizeStarter } from './fingerprint-source.js';
+import { readReceipts } from './receipts.js';
+import { defaultStateDir } from './cache.js';
+import { weeklyHandled, formatWeekly } from './weekly.js';
+import { learnedItems, readLearnedState, reviewLine } from './learned.js';
 
 const BASE_DIR = dirname(fileURLToPath(import.meta.url));
+
+// Every outcome ends with what Phaedo did for the subject this week — the reason to have it.
+const week = async () => `  ${formatWeekly(weeklyHandled(await readReceipts(defaultStateDir()).catch(() => [])))}\n`;
+// …and, when there is any, what Phaedo learned that the subject hasn't looked at yet.
+const review = (vd) => { const line = reviewLine(learnedItems(vd), readLearnedState(defaultStateDir())); return line ? `  ${line}\n` : ''; };
 
 loadFingerprint(BASE_DIR)
   .then(async (vd) => {
@@ -28,12 +37,14 @@ loadFingerprint(BASE_DIR)
         `  ${learned} thing(s) learned across ${areas} area(s)${sessions ? ` from ${sessions} session(s)` : ''} — ${stage}\n` +
         `  Pair the Phaedo phone app (npm run pair) to replace it with your full profile.\n`
       );
+      process.stdout.write(await week() + review(vd));
       process.exit(0);
     }
     if (src.live) {
       process.stdout.write(
         `✓ Read your profile from the phone — fingerprint ${fp.fingerprint_id || '(no id)'}, ${layers} layer(s).\n`
       );
+      process.stdout.write(await week() + review(vd));
       process.exit(0);
     }
     const hours = src.ageMs != null ? Math.round(src.ageMs / 3600000) : null;
@@ -43,9 +54,11 @@ loadFingerprint(BASE_DIR)
       `  Anything you changed since then — including a revoked authorization — is NOT reflected.\n` +
       `  Open Phaedo on your phone and approve the card, then run this again.\n`
     );
+    process.stdout.write(await week() + review(vd));
     process.exit(2);                       // distinct from 1 (hard failure) — stale, not broken
   })
-  .catch((err) => {
+  .catch(async (err) => {
     process.stderr.write(`✗ Couldn't read your profile: ${err.message}\n`);
+    process.stdout.write(await week());
     process.exit(1);
   });

@@ -6,7 +6,7 @@
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'fs';
 import { join, win32 } from 'path';
 import { tmpdir } from 'os';
-import {
+import { SHIP_HOOK_MATCHER,
   detectClients, serverEntry, readConfig, mergeServerEntry, removeServerEntry, applyToClient,
   claudeSettingsPath, hookCommand, mergeSessionStartHook, removeSessionStartHook, applyCodeHook,
   buildConsultEnv, detectConsultModel, purgeLocalData, applyCaptureModelConfig,
@@ -154,6 +154,15 @@ try {
     run();
     const after = JSON.parse(readFileSync(join(home, '.cursor', 'mcp.json'), 'utf8')).mcpServers.phaedo;
     ok(!after.env || !after.env.PHAEDO_CONSULT_MODEL, 'plain install removes the judge env an old default-on install wrote');
+    // Uninstall takes Phaedo's block out of other agents' instruction files (rules-files.js).
+    const { block } = await import('./rules-files.js');
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    writeFileSync(join(home, '.codex', 'AGENTS.md'), `Mine.\n\n${block('profile')}\n`);
+    const { CODEX_HOME: _c, ...noCodexHome } = process.env;
+    const un = spawnSync(process.execPath, ['install.mjs', '--only', 'cursor', '--uninstall'],
+      { env: { ...noCodexHome, HOME: home, USERPROFILE: home }, encoding: 'utf8', timeout: 20000 });
+    ok(/Codex .*took Phaedo's section out/.test(un.stdout), 'uninstall says it took the block out of Codex\'s file');
+    ok(readFileSync(join(home, '.codex', 'AGENTS.md'), 'utf8') === 'Mine.\n', "…and left the user's own text");
     rmSync(home, { recursive: true, force: true });
   }
 
@@ -224,7 +233,7 @@ try {
   // Ship hook: the same script on all three Bash events, matcher-scoped, with a timeout.
   for (const ev of ['PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure']) {
     const e = (written.hooks[ev] || []).find((x) => x.hooks?.[0]?.command?.includes('pre-ship.mjs'));
-    ok(!!e && e.matcher === 'Bash' && e.hooks[0].timeout === 15, `ship hook on ${ev}: Bash matcher + timeout`);
+    ok(!!e && e.matcher === SHIP_HOOK_MATCHER && /^Bash\|mcp__/.test(e.matcher) && e.hooks[0].timeout === 15, `ship hook on ${ev}: shell + consequential-tool matcher + timeout`);
   }
   ok(applyCodeHook({ action: 'install', home: hookHome }).status === 'unchanged', 'second install unchanged');
   // An older install (no ship hook) upgrades to one, and a sibling PreToolUse hook survives.

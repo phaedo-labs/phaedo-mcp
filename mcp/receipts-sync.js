@@ -29,6 +29,7 @@
 import { Phaedo, b64uDec } from './lib/phaedo-crypto.js';
 import { readReceipts, markOutcome, USER_ACTIONS } from './receipts.js';
 import { agreementDigest } from './agreement.js';
+import { weeklyHandled, formatWeekly } from './weekly.js';
 
 const { Kdf, Envelope } = Phaedo;
 const DEFAULT_RELAY = 'https://phaedo-relay.fly.dev';
@@ -95,7 +96,11 @@ export async function buildReceiptsDeposit(pairKeyB64u, receipts, { cap = DIGEST
     pairKey.fill(0);
   }
   try {
-    const inner = { kind: 'receipts_digest', data: { receipts: head, agreement, generated_at: generatedAt } };
+    // The visible win: what Phaedo handled without interrupting the subject this week. Counts
+    // plus the sentence the MCP already shows in /phaedo:status, so both surfaces say the same.
+    const w = weeklyHandled(list, { now: Number.isFinite(agreementAt) ? agreementAt : Date.now() });
+    const week = { ...w, summary: formatWeekly(w) };
+    const inner = { kind: 'receipts_digest', data: { receipts: head, agreement, week, generated_at: generatedAt } };
     const plaintext = new TextEncoder().encode(JSON.stringify(inner));
     const envelope = await Envelope.wrap(plaintext, fpSyncKey, { artifact_kind: 'receipts_digest', created_at: now() });
     plaintext.fill(0);

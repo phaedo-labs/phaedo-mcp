@@ -16,12 +16,15 @@
 //
 // FAIL-SAFE: any error (no pairing, phone unreachable + no cache, render failure)
 // exits 0 with NO output, so a missing fingerprint never blocks or slows your
-// session beyond a short timeout. It never writes anything.
+// session beyond a short timeout. The one thing it writes: other agents' instruction files
+// that already carry Phaedo's block (rules-files.js) get the same profile, refreshed — never
+// a file the subject didn't opt in with `npm run rules`.
 
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 import { loadFingerprintPreferCache } from '../fingerprint-source.js';
 import { buildInjectionResponse } from '../projection.js';
+import { refreshExisting } from '../rules-files.js';
 
 // hooks/ lives one level under mcp/ — the sources resolve against mcp/.
 const MCP_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -46,7 +49,10 @@ async function run() {
   // Same pattern that #76 applied to escalation (cache-preferred fingerprint read).
   const vd = await loadFingerprintPreferCache(MCP_DIR);
   const response = buildInjectionResponse(vd, { requested_layers: ['all'], mode: 'standard' });
-  if (response && response.projection) emitContext(response.projection);
+  if (response && response.projection) {
+    emitContext(response.projection);
+    await refreshExisting(response.projection).catch(() => {});
+  }
 }
 
 const timeout = new Promise((res) => setTimeout(res, BUDGET_MS));

@@ -71,7 +71,7 @@ function clean(dir) {
 // the "load at session start" instruction (lib/config-dir.js). plugin-src-directory/ overlays
 // plugin-src/ with its own hooks (the merge check only), status skill and README.
 const DIRECTORY_LEAVE_OUT = [
-  'hooks/session-start.mjs', 'hooks/session-end.mjs', 'hooks/stop-capture.mjs',
+  'hooks/session-start.mjs', 'hooks/session-end.mjs', 'hooks/stop-capture.mjs', 'rules-files.js', 'history-import.js',
   'capture-a11y.js', 'capture-sync.js', 'vendor/capture', 'vendor/extraction', 'vendored-files.mjs',
 ];
 

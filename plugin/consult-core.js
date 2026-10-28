@@ -489,14 +489,51 @@ function resolveActionApproval(vd, n, suppressed) {
   } else {
     signal = p.score >= 0.7 ? 'proceed_with_note' : 'proceed';
   }
-  const domain = n.domain ? ` in the ${n.domain} domain` : '';
-  const posture = p.score >= 0.55 ? 'favors caution and human review'
-                : p.score <= 0.4  ? 'favors acting and adjusting'
-                : 'weighs the main risks before committing';
-  const hint = irreversible
-    ? `On irreversible${mag >= 2 ? ', high-magnitude' : ''} actions${domain}, the subject ${posture}.`
-    : `On reversible actions${domain}, the subject ${posture}.`;
+  const hint = actionApprovalHint({ signal, score: p.score, irreversible, mag, thinEvidence, domain: n.domain });
   return { signal, hint, coverage: p.coverage, found: p.found, withheld: p.withheld, signalConfidence: p.signalConfidence };
+}
+
+// The rationale must explain the SIGNAL, not just the subject's general posture. It used to
+// state the posture alone, so a cautious subject's low-stakes, reversible action came back
+// "proceed_with_note — the subject favors caution and human review": an answer and a reason
+// pointing opposite ways, which an agent can't act on and a person can't trust. Now the sentence
+// says how this person leans in this situation, then what that means for this action.
+export function actionApprovalHint({ signal, score, irreversible, mag, thinEvidence, domain }) {
+  const where = domain ? ` in the ${domain} domain` : '';
+  const situation = irreversible
+    ? `On irreversible${mag >= 2 ? ', high-stakes' : ''} actions${where}`
+    : mag >= 2 ? `On high-stakes actions${where}`
+    : domain ? `In the ${domain} domain` : 'In general';   // the ending names the low stakes, once
+  const lean = score >= 0.55 ? 'cautious' : score <= 0.4 ? 'acting' : 'balanced';
+  const posture = lean === 'cautious' ? 'favors caution and human review'
+                : lean === 'acting' ? 'favors acting and adjusting'
+                : 'weighs the main risks before committing';
+  const lowStakes = !irreversible && mag < 2;
+  // Each ending carries its own connector: "but" when the answer goes against the lean.
+  let consequence;
+  switch (signal) {
+    case 'proceed':
+      consequence = lean === 'cautious' ? ', but this one is reversible and low-stakes, so going ahead fits'
+                  : lean === 'balanced' ? ', and this one is reversible and low-stakes, so going ahead fits'
+                  : ', so going ahead fits';
+      break;
+    case 'proceed_with_note':
+      consequence = lean !== 'cautious' ? ', so go ahead and tell them what you did'
+                  : lowStakes ? ', but this one is reversible and low-stakes, so go ahead and tell them what you did'
+                  : ', but the evidence you gave is enough to go ahead; tell them what you did';
+      break;
+    case 'clarify':
+      consequence = thinEvidence ? `, ${lean === 'acting' ? 'but' : 'and'} no evidence was offered, so ask before acting`
+                  : lean === 'acting' ? ', but this one is unclear enough to ask before acting'
+                  : ', so ask before acting';
+      break;
+    case 'escalate':
+      consequence = lean === 'acting' ? ', but the stakes here call for checking with them first' : ', so check with them first';
+      break;
+    default:
+      consequence = '';
+  }
+  return `${situation}, the subject ${posture}${consequence}.`;
 }
 
 function resolveDomainRiskCheck(vd, n, suppressed) {

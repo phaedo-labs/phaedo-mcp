@@ -197,14 +197,19 @@ const PKG_VERSION = JSON.parse(readFileSync(join(BASE_DIR, 'package.json'), 'utf
 // put this in the model's context on every turn.
 // The directory edition loads the profile only when asked (lib/config-dir.js explains why).
 const DIRECTORY_EDITION = isDirectoryEdition(BASE_DIR);
+// Codex keeps only the first 512 characters of a server's instructions, so the three rules an
+// agent must follow come first, tersely; the detail that only helps follows. A test pins it.
+export const INSTRUCTIONS_CORE_LIMIT = 512;
 const SERVER_INSTRUCTIONS = [
-  'Phaedo holds the user\'s profile: how they like answers written, and how they want decisions handled when an AI acts for them.',
+  'Phaedo knows how the user likes answers written and how they want decisions handled.',
   DIRECTORY_EDITION
-    ? '- When the user asks to load their Phaedo profile, call phaedo_request_injection and treat the returned projection as background on the user\'s style. Don\'t load it unasked.'
-    : '- At the start of a session, call phaedo_request_injection once and treat the returned projection as background on the user\'s style.',
-  '- Before a consequential action for the user (merging, deploying, publishing, sending a message, spending money, deleting, changing an account or setting), call phaedo_consult and follow its signal. If you are acting on your own and the decision should be the user\'s, use phaedo_escalate and do not proceed until it resolves.',
-  '- When the user reacts to an action you consulted on, call phaedo_record_outcome with its receipt_id: record what they chose, never what you inferred.',
-  '- If a tool says no Phaedo profile is set up, tell the user once, plainly, and carry on normally. Do not retry.',
+    ? '1. Only when the user asks to load their Phaedo profile, call phaedo_request_injection. Don\'t load it unasked.'
+    : '1. At session start, call phaedo_request_injection once and use it as background on their style.',
+  '2. Before a consequential action (merge, deploy, publish, send, spend, delete, change a setting), call phaedo_consult and follow its signal.',
+  '3. When the user reacts to that action, call phaedo_record_outcome with its receipt_id: what they chose, never what you inferred.',
+  // ── beyond the 512-character core ──
+  'If you are acting on your own and the decision should be the user\'s, use phaedo_escalate and do not proceed until it resolves.',
+  'If a tool says no Phaedo profile is set up, tell the user once, plainly, and carry on normally. Do not retry.',
 ].join('\n');
 const server = new McpServer({ name: 'phaedo', version: PKG_VERSION }, { instructions: SERVER_INSTRUCTIONS });
 

@@ -123,6 +123,51 @@ will then tell you there's no profile until you pair your phone.
 You can disconnect this computer at any time from the **Agents** screen on your
 phone.
 
+### Learn from your ChatGPT or Claude history
+
+```bash
+npm run import -- ~/Downloads/your-export.zip
+```
+
+Get the file from ChatGPT (Settings → Data controls → Export data) or Claude (Settings → Privacy →
+Export data); each emails a zip. Phaedo reads the last year of conversations (`--all` for
+everything, `--dry-run` to count first) through the same on-device detectors as Claude Code
+capture, keeps only the counts, and discards the text — delete the export afterwards. Importing
+the same file again replaces, never doubles. Paired: the patterns go to your phone. Not paired:
+they become your starter profile. In the Claude Code plugin, it's `/phaedo:import`.
+
+### See what Phaedo learned — keep it or remove it
+
+```bash
+npm run learned
+```
+
+Lists what Phaedo inferred from how you work (not your interview answers or your rules), one
+plain sentence each, and flags pairs that disagree ("favor speed" vs "favor quality").
+`npm run learned -- --remove 3,5` stops those shaping answers and decisions on this computer —
+the list is applied every time the profile loads, so a pattern your sessions keep showing stays
+removed. `--keep all` marks the rest reviewed; `--forgotten` and `--restore <n>` undo.
+`/phaedo:status` says when there are new things to look at. To remove something from the phone's
+profile itself, use the Phaedo app. In the Claude Code plugin, it's `/phaedo:learned`.
+
+### Give agents without MCP the same profile
+
+Codex, Copilot CLI, Gemini CLI and Antigravity each read a personal instructions file at the
+start of every session. One command writes a short version of your profile (your rules and how
+you like answers) into each one found on this computer:
+
+```bash
+npm run rules
+```
+
+It goes into `~/.codex/AGENTS.md`, `~/.copilot/copilot-instructions.md` and
+`~/.gemini/GEMINI.md` (shared by Gemini CLI and Antigravity), inside a marked block; the rest
+of each file is left alone. Cursor has no personal file, so name a project:
+`npm run rules -- --project ~/code/app` writes `.cursor/rules/phaedo.mdc` and keeps it out of
+git. Phaedo refreshes these files whenever a Claude Code session starts with Phaedo on, and
+only those you set up. `npm run rules -- --dry-run` shows the text first;
+`npm run rules -- --remove` takes it out. In the Claude Code plugin, it's `/phaedo:rules`.
+
 ---
 
 ## Reference
@@ -356,22 +401,41 @@ detectors, and a model call can never break or stall a session (30s budget, hook
 exits 0). Prefer the `setup:capture-model` config file over an env var — the file reaches
 Dock-launched Claude Desktop, a shell `export` does not.
 
-### Consult before shipping, from Claude Code (`hooks/pre-ship.mjs`)
+### Your personal reviewer in Claude Code (`hooks/pre-ship.mjs`)
 
-`npm run setup:code-hook` also installs a **ship hook** on Bash (PreToolUse,
-PermissionRequest, PostToolUse, PostToolUseFailure). Before an agent merges a PR
-(`gh pr merge`), deploys (`fly deploy`), builds or submits a phone app (`eas build` /
-`eas submit`) or pushes straight to `main`, the hook runs a full `phaedo_consult` on it
-(`ship-actions.js` names these; every other command is ignored in ~50 ms) and writes a
-§10.6 receipt, `agent_id: claude-code/ship-hook`.
+`npm run setup:code-hook` (or the Claude plugin) installs this hook on PreToolUse,
+PermissionRequest, PostToolUse and PostToolUseFailure, for shell commands and for
+connected-app (MCP) tool calls. Before an agent does something people disagree about, the
+hook runs a full `phaedo_consult` on it and writes a §10.6 receipt, `agent_id:
+claude-code/ship-hook`. `ship-actions.js` names what counts:
+
+- **Shell:** merge a PR (`gh pr merge`), deploy (`fly deploy`, `vercel --prod`, `netlify deploy
+  --prod`, `firebase deploy`, `terraform apply|destroy`, `kubectl apply|delete`), build or
+  submit a phone app (`eas build` / `eas submit`), push straight to `main`, force-push any
+  branch, delete a remote branch, open a PR, comment on or review a PR or issue, publish a
+  package (`npm`/`pnpm`/`yarn`/`bun publish`, `cargo publish`, `twine upload`, `gem push`;
+  never `--dry-run`), create a GitHub release.
+- **Connected apps:** any tool whose name says it sends, replies, forwards, posts, publishes,
+  comments, shares or invites; pays, purchases, transfers or checks out; deletes, purges,
+  destroys or trashes; or merges — through any MCP server except Phaedo's own. The receipt
+  records who or what the call targets (recipient, channel, subject, amount), never a message
+  body.
+
+Every other command or tool is ignored in about 50 ms.
+
+**Why it matters in auto mode.** Auto mode's reviewer judges an action by its type and lets
+routine ones through. Phaedo asks the other question — would *this* person want to see this
+one? — and when the answer is yes it returns `ask`, which forces a real prompt even in auto
+mode, with the reason in your terms: "it can't be undone", "it spends $250", or "your rule:
+ask me before posting in #eng". When the answer is no, it stays quiet.
 
 - **It only ever adds friction.** It never returns `allow`. A permissive answer leaves
   Claude Code's own permission flow untouched; `escalate` / `clarify` / `decline` returns
   `ask`, so the action comes to you with one plain line saying why.
 - **Outcomes are yours, never inferred.** The hook records `approved` only when it has
-  evidence you were asked: Claude Code fired PermissionRequest for that command, and the
-  command then ran. That holds in every mode except auto / dontAsk, where no person
-  answers. Decline and the agent records `rejected` (Claude Code fires no hook for a
+  evidence you were asked: Claude Code fired PermissionRequest for that call, and the
+  call then ran. In auto mode that counts only when Phaedo itself asked (the prompt it forced
+  is yours; any other is the classifier's); in dontAsk, never. Decline and the agent records `rejected` (Claude Code fires no hook for a
   decline). No prompt shown, nothing recorded; the agent is told so, and records your
   reaction only if you give one.
 - **What a merge changes.** Before `gh pr merge` the hook reads the PR from GitHub (read-only):
@@ -384,6 +448,27 @@ PermissionRequest, PostToolUse, PostToolUseFailure). Before an agent merges a PR
 - **See what it has done:** `npm run ship-readout` (`-- --days 90` to widen).
 - **Fail-safe:** any error, timeout (12 s) or unusable profile → no output, the command
   runs as if the hook weren't there.
+
+### The same check in Cursor, Copilot CLI, Codex and Gemini CLI (`hooks/agent-hook.mjs`)
+
+```bash
+cd ~/phaedo/mcp && npm run setup:agent-hooks
+```
+
+This adds Phaedo's check to each of these agents found on this computer, beside any hooks you
+already have: `~/.cursor/hooks.json`, `~/.copilot/hooks/phaedo.json`, `~/.codex/hooks.json`
+and `~/.gemini/settings.json`. The same actions are reviewed, with the same consult and the
+same decision records (each names the agent that asked).
+
+- **Cursor and Copilot CLI** can show a confirmation prompt, so you get one, with the reason.
+- **Codex and Gemini CLI** can't prompt from a hook, so Phaedo pauses the action once with the
+  reason; the agent asks you in the chat, and the same command run again within 15 minutes goes
+  through. It never blocks twice in a row and never says yes on your behalf.
+- **Codex** skips new hooks until you trust them: run `/hooks` in Codex once and trust Phaedo's.
+- **Antigravity** has no hooks, so it gets your profile (`npm run rules`) but not this check.
+- Outcomes aren't recorded automatically in these agents yet; `npm run ship-readout` shows
+  what they asked.
+- `npm run unsetup` (uninstall) takes them all out.
 
 ## Consult at decision points (`phaedo_consult`, §10)
 

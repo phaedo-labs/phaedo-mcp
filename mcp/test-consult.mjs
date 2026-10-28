@@ -7,6 +7,7 @@
 import assert from 'assert';
 import { buildConsultationResponse, resolveConsultation, consultOptsFromEnv, CONSULTATION_TYPES, consultDrivers, deriveDelegationSignals, withDelegationSignals, buildDelegationPromotions, DELEGATION_PROMOTION_FLOOR, authoredDelegationSignals } from './consult.js';
 import { PhaedoError } from './projection.js';
+import { actionApprovalHint } from './consult-core.js';
 
 let pass = 0;
 const ok = (c, m) => { assert.ok(c, m); pass++; };
@@ -436,6 +437,35 @@ console.log('\nconsultDrivers (receipt provenance)');
   ok(consultDrivers(sparse, { consultation_type: 'action_approval', action_descriptor: {} }).length === 0, 'no relevant cues → no drivers (matches the abstain floor)');
   ok(consultDrivers(cautious, { consultation_type: 'voice_draft' }).length === 0, 'voice_draft is a redirect → no inferred drivers');
   ok(consultDrivers(cautious, { consultation_type: 'bogus' }).length === 0, 'malformed request → [] (never throws)');
+}
+
+console.log('\nthe reason agrees with the answer (no "go ahead — favors caution")');
+{
+  // Every signal × lean × situation the resolver can produce, and the ones it can't.
+  let n = 0;
+  for (const [irreversible, mag] of [[false, 1], [false, 2], [true, 1], [true, 2]]) {
+    for (const score of [0.3, 0.5, 0.75]) {
+      for (const signal of ['proceed', 'proceed_with_note', 'clarify', 'escalate']) {
+        for (const thinEvidence of [true, false]) {
+          const h = actionApprovalHint({ signal, score, irreversible, mag, thinEvidence, domain: 'engineering' });
+          const goes = signal.startsWith('proceed');
+          const lean = score >= 0.55 ? 'cautious' : score <= 0.4 ? 'acting' : 'balanced';
+          // When the answer goes against the lean, the reason must say "but" and why.
+          if (goes && lean === 'cautious') assert.ok(/, but /.test(h), `cautious + ${signal} explains itself: ${h}`);
+          if (!goes && lean === 'acting') assert.ok(/, but /.test(h), `acting + ${signal} explains itself: ${h}`);
+          if (goes) assert.ok(!/check with them first|ask before acting/.test(h), `${signal} never tells the agent to stop: ${h}`);
+          else assert.ok(!/go ahead|going ahead fits/.test(h), `${signal} never tells the agent to go ahead: ${h}`);
+          assert.ok(h.length <= 280 && /\.$/.test(h) && !/;\s*so|,,/.test(h), `one clean sentence within the 280-char cap: ${h}`);
+          n++;
+        }
+      }
+    }
+  }
+  ok(n === 96, 'all 96 combinations read consistently');
+  const sample = JSON.parse((await import('node:fs')).readFileSync(new URL('./sample-fingerprint.json', import.meta.url), 'utf8'));
+  const r = await resolveConsultation(sample, { consultation_type: 'action_approval', action_descriptor: { domain: 'engineering', reversible: true, magnitude: 'low' } }, {});
+  ok(r.signal === 'proceed_with_note' && /, but this one is reversible and low-stakes, so go ahead/.test(r.rationale_hint),
+    'the case that was reported: a cautious subject, a low-stakes merge → "go ahead", and the reason says why');
 }
 
 console.log(`\n✓ consult: ${pass} checks passed`);

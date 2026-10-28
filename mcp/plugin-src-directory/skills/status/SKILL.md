@@ -18,4 +18,6 @@ Check whether this computer's Phaedo is paired with the user's phone.
    - **Cached copy:** the phone couldn't be reached, so an older copy was used. Open the Phaedo app and try again.
    - **No profile:** nothing is set up yet. Pair the phone app with `/phaedo:pair`.
 
+3. End with the line it printed about this week (what Phaedo handled without interrupting them), as printed.
+
 Don't show file paths, ids or raw output unless the user asks.

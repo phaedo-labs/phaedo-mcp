@@ -41,7 +41,7 @@ import { dirname, resolve, join } from 'path';
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'fs';
 import { createHash } from 'crypto';
 import { execFile } from 'child_process';
-import { classifyShipCommand } from '../ship-actions.js';
+import { classifyShipCommand, classifyToolCall } from '../ship-actions.js';
 import { isMainModule } from '../lib/is-main.js';
 
 const MCP_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -55,7 +55,11 @@ export const BUDGET_MS = 12000;
 export const ASKING_SIGNALS = new Set(['escalate', 'clarify', 'decline']);
 
 // Permission modes in which a PermissionRequest is not evidence that a PERSON answered:
-// auto mode's classifier and dontAsk decide without one.
+// auto mode's classifier and dontAsk decide without one. With ONE exception, in auto mode: when
+// this hook itself returned `ask`, Claude Code shows the subject a real prompt ("a hook's `ask`
+// also forces a permission prompt in auto mode: the classifier can still deny the tool call,
+// but it can't approve the call silently" — hooks reference). That prompt is the personal
+// reviewer's whole point, so a yes on it is the subject's and is recorded.
 const NO_HUMAN_MODES = new Set(['auto', 'dontAsk']);
 
 // The profile is read from the at-rest cache, which only a live read refreshes. Past this
@@ -70,6 +74,10 @@ const PENDING_TTL_MS = DAY_MS;
 export const AGENT_ID = 'claude-code/ship-hook';
 
 export const commandHash = (cmd) => createHash('sha256').update(String(cmd ?? '')).digest('hex');
+// The call's identity across its hook events: the command for Bash, the input for a tool.
+export const callHash = (input) => commandHash(input?.tool_name === 'Bash' ? input?.tool_input?.command : `${input?.tool_name}:${JSON.stringify(input?.tool_input ?? null)}`);
+// The calls this hook reviews: shell commands, and connected tools (MCP).
+const reviewable = (input) => input?.tool_name === 'Bash' || String(input?.tool_name || '').startsWith('mcp__');
 
 // ── CI state for a merge (precedent track Phase 1b, B6) ───────────────────────────────
 // Merging a PR whose checks are failing, or have not finished, is a bigger act than merging a
@@ -217,9 +225,22 @@ export function writeState(path, state, now) {
   renameSync(tmp, path);
 }
 
+// THE PERSONAL PART OF THE PROMPT. Auto mode's reviewer judges an action by its type; this says
+// why THIS person would want to see it — their own rule when one decided it, else what is at
+// stake. Built only from the agent's descriptor and the consult answer (never vault content).
+export function personalWhy(descriptor = {}, response = {}) {
+  const rule = /^Per your standing rule: (.+?)\.?$/.exec(String(response?.rationale_hint || '').trim());
+  if (rule) return `your rule: ${rule[1]}`;
+  const w = [];
+  if (descriptor.reversible === false) w.push("it can't be undone");
+  if (typeof descriptor.amount === 'number' && descriptor.amount > 0) w.push(`it spends $${descriptor.amount.toLocaleString('en-US', { maximumFractionDigits: 2 })}`);
+  return w.join(' and ');
+}
+
 // What the subject reads on the prompt. Plain words, no numbers, no protocol terms.
-export function promptReason(signal, summary, why) {
-  const what = why ? `${summary} — ${why}` : summary;
+export function promptReason(signal, summary, why, personal = '') {
+  const reasons = [why, personal].filter(Boolean).join('; ');
+  const what = reasons ? `${summary} — ${reasons}` : summary;
   if (signal === 'decline') return `Phaedo thinks you'd say no to this one: ${what}. Go ahead anyway?`;
   if (signal === 'clarify') return `Phaedo isn't sure how you'd want this handled: ${what}. Go ahead?`;
   return `Phaedo thinks you'd want to OK this yourself: ${what}.`;
@@ -228,7 +249,7 @@ export function promptReason(signal, summary, why) {
 // What the agent reads before the command. It carries the receipt id — the one handle
 // that attributes an outcome to THIS decision rather than whatever receipt is newest.
 export function preContext({ summary, signal, receiptId, asked, hint }) {
-  const head = `Phaedo was consulted before this command (${summary}) and answered "${signal}"` +
+  const head = `Phaedo was consulted before this action (${summary}) and answered "${signal}"` +
     (hint ? ` — ${hint}` : '') + `. receipt_id: ${receiptId}.`;
   if (asked) {
     return `${head} Phaedo flagged it for the user, so they may be asked to confirm. If they decline, ` +
@@ -243,7 +264,7 @@ export function preContext({ summary, signal, receiptId, asked, hint }) {
 
 // After the command, when Phaedo had flagged it and no prompt was shown.
 export function unpromptedContext(receiptId) {
-  return `No confirmation prompt was shown for this command (receipt_id: ${receiptId}), though Phaedo ` +
+  return `No confirmation prompt was shown for this action (receipt_id: ${receiptId}), though Phaedo ` +
     `had flagged it for the user. Tell them in one line that it ran and Phaedo had flagged it, and ` +
     `record their reaction with phaedo_record_outcome and this receipt_id if they give one. Silence ` +
     `is not approval.`;
@@ -264,12 +285,12 @@ export function staleContext(days, mcpDir) {
  * Returns the JSON object to print, or null for no output.
  */
 export async function runShipHook(input, deps) {
-  if (!input || input.tool_name !== 'Bash') return null;
+  if (!reviewable(input)) return null;
   const now = deps.now ?? Date.now();
   const ev = input.hook_event_name;
 
   if (ev === 'PreToolUse') {
-    const ship = classifyShipCommand(input.tool_input?.command);
+    const ship = classifyToolCall(input.tool_name, input.tool_input);
     if (!ship) return null;
     // B6 + B3: one GitHub lookup per merge — check state, size, paths. Each can only raise.
     let ci = null, stakes = null;
@@ -281,7 +302,7 @@ export async function runShipHook(input, deps) {
     const raised = why !== '';
     const request = {
       consultation_type: 'action_approval',
-      agent_id: AGENT_ID,
+      agent_id: deps.agentId || AGENT_ID,
       action_descriptor: raised ? { ...ship.action_descriptor, magnitude: 'high' } : ship.action_descriptor,
       action_binding: ship.action_binding,
     };
@@ -299,7 +320,7 @@ export async function runShipHook(input, deps) {
     const state = readState(deps.statePath);
     if (input.tool_use_id) {
       state.pending[input.tool_use_id] = {
-        receipt_id: receiptId, cmd_hash: commandHash(input.tool_input?.command),
+        receipt_id: receiptId, cmd_hash: callHash(input),
         asked, prompt_shown: false, at: new Date(now).toISOString(),
       };
     }
@@ -317,7 +338,7 @@ export async function runShipHook(input, deps) {
     return {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
-        ...(asked ? { permissionDecision: 'ask', permissionDecisionReason: promptReason(signal, ship.summary, why) } : {}),
+        ...(asked ? { permissionDecision: 'ask', permissionDecisionReason: promptReason(signal, ship.summary, why, personalWhy(request.action_descriptor, response)) } : {}),
         additionalContext: context,
       },
     };
@@ -326,13 +347,15 @@ export async function runShipHook(input, deps) {
   if (ev === 'PermissionRequest') {
     // Evidence that a prompt is about to be shown for this command. PermissionRequest has
     // no tool_use_id (documented), so match the newest pending consult on the same command.
-    if (NO_HUMAN_MODES.has(input.permission_mode)) return null;
-    const h = commandHash(input.tool_input?.command);
+    if (input.permission_mode === 'dontAsk') return null;
+    const h = callHash(input);
     const state = readState(deps.statePath);
     const hit = Object.values(state.pending)
       .filter((e) => e.cmd_hash === h && !e.prompt_shown)
       .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
     if (!hit) return null;
+    // Auto mode: only the prompt Phaedo forced is a person's; anything else is the classifier.
+    if (NO_HUMAN_MODES.has(input.permission_mode) && !hit.asked) return null;
     hit.prompt_shown = true;
     writeState(deps.statePath, state, now);
     return null;                     // never decide here — the subject answers the prompt
@@ -361,7 +384,8 @@ export async function runShipHook(input, deps) {
 }
 
 // ── Real deps: the same consult path as the MCP server (consult-runtime.js). ──────────
-async function realDeps() {
+// `agentId` names the agent on the receipt; other agents' hooks (agent-hook.mjs) pass their own.
+export async function realDeps({ agentId = AGENT_ID, statePath } = {}) {
   const { loadConsultVd, buildConsultOpts } = await import('../consult-runtime.js');
   const { resolveConsultation, consultDrivers, withRevision } = await import('../consult.js');
   const { buildReceipt, appendReceipt, receiptsCapFromEnv, markOutcome } = await import('../receipts.js');
@@ -371,7 +395,8 @@ async function realDeps() {
   const quiet = () => {};
   const opts = buildConsultOpts(MCP_DIR, process.env, { warn: quiet });
   return {
-    statePath: join(stateDir, 'ship-hook.json'),
+    statePath: statePath || join(stateDir, 'ship-hook.json'),
+    agentId,
     mcpDir: MCP_DIR,
     prFacts: (ship, cwd) => lookupPrFacts(ship, cwd),
     async consult(request) {
@@ -382,7 +407,7 @@ async function realDeps() {
       return { response, drivers, source: sourceOf(vd) };
     },
     async writeReceipt({ request, response, drivers }) {
-      const r = buildReceipt({ via: 'phaedo_consult', agentId: AGENT_ID, clientId: opts.clientId, request, response, drivers });
+      const r = buildReceipt({ via: 'phaedo_consult', agentId, clientId: opts.clientId, request, response, drivers });
       await appendReceipt(stateDir, r, { cap: receiptsCapFromEnv(process.env) });
       return r.receipt_id;
     },
@@ -395,8 +420,8 @@ async function main() {
   for await (const chunk of process.stdin) raw += chunk;
   const input = JSON.parse(raw);
   // Cheap exit before importing the vault stack: most Bash calls are not ship actions.
-  if (input?.tool_name !== 'Bash') return;
-  if (input.hook_event_name === 'PreToolUse' && !classifyShipCommand(input.tool_input?.command)) return;
+  if (!reviewable(input)) return;
+  if (input.hook_event_name === 'PreToolUse' && !classifyToolCall(input.tool_name, input.tool_input)) return;
   const out = await runShipHook(input, await realDeps());
   if (out) process.stdout.write(JSON.stringify(out));
 }

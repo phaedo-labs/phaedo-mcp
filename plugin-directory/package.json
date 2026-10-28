@@ -1,6 +1,6 @@
 {
   "name": "phaedo-mcp",
-  "version": "0.3.7",
+  "version": "0.3.13",
   "description": "Lets Claude, Cursor and other MCP apps answer in your style, check with you before acting, send decisions to your phone to approve, and ask you to sign purchase approvals with Face ID. Needs the Phaedo phone app; set PHAEDO_FINGERPRINT=sample to try it.",
   "license": "Apache-2.0",
   "type": "module",

@@ -27,6 +27,9 @@ import { dirname, join, resolve } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { spawnSync } from 'child_process';
+import { MCP_HOOK_MATCHER } from './ship-actions.js';
+import { targets as rulesTargets, removeFromFile } from './rules-files.js';
+import { applyAgentHooks } from './agent-hooks.js';
 
 const BASE_DIR = dirname(fileURLToPath(import.meta.url));
 const SERVER_PATH = join(BASE_DIR, 'server.js');
@@ -46,7 +49,10 @@ const SHIP_HOOK_MARKER = 'hooks/pre-ship.mjs';           // identifies our ship-
 // it ran or failed (to record that person's yes). Its own budget is 12s; the timeout is
 // the backstop.
 export const SHIP_HOOK_EVENTS = ['PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure'];
-const SHIP_HOOK_ENTRY = { matcher: 'Bash', timeout: 15 };
+// Shell commands, plus connected-tool calls whose name says they send, pay, delete or merge
+// (ship-actions.js MCP_HOOK_MATCHER) — the personal reviewer covers both.
+export const SHIP_HOOK_MATCHER = `Bash|${MCP_HOOK_MATCHER}`;
+const SHIP_HOOK_ENTRY = { matcher: SHIP_HOOK_MATCHER, timeout: 15 };
 
 // ── Client registry ──────────────────────────────────────────────────────────
 // Every supported client stores MCP servers as a top-level `mcpServers` object,
@@ -412,6 +418,7 @@ function parseArgs(argv) {
     else if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--only') opts.only = argv[++i];
     else if (a === '--code-hook') opts.codeHook = true;
+    else if (a === '--agent-hooks') opts.agentHooks = true;
     else if (a === '--consult-model') opts.consultModel = argv[++i];
     else if (a === '--consult-url') opts.consultUrl = argv[++i];
     else if (a === '--no-model-judge') opts.noModelJudge = true;
@@ -430,6 +437,8 @@ const HELP = `Phaedo MCP installer
   node install.mjs --pair          configure, then run the one-time pairing
   node install.mjs --code-hook     also add the Claude Code SessionStart hook
                                    (true auto-injection; ~/.claude/settings.json)
+  node install.mjs --agent-hooks   also add Phaedo's merge check to Cursor, Copilot CLI,
+                                   Codex and Gemini CLI (each one found on this computer)
   node install.mjs --capture-model <name|off>   turn the capture hook's local
                                    model detector on (e.g. llama3.1:8b) or off.
                                    Writes <state dir>/capture-model.json, which
@@ -506,6 +515,19 @@ async function main(argv) {
   // cleaned up on uninstall.
   if (opts.codeHook || action === 'uninstall') {
     results.push(applyCodeHook({ action, dryRun: opts.dryRun }));
+  }
+  // The merge check in other agents (agent-hooks.js): opt-in on install, always cleaned up.
+  if (opts.agentHooks || action === 'uninstall') {
+    results.push(...applyAgentHooks({ action, dryRun: opts.dryRun }));
+  }
+  // Other agents' instruction files (rules-files.js): with the hook gone nothing would keep
+  // them current, so an uninstall always takes Phaedo's block back out.
+  if (action === 'uninstall') {
+    for (const t of Object.values(rulesTargets())) {
+      const r = await removeFromFile(t.file, { dryRun: opts.dryRun }).catch((e) => ({ status: 'error', error: e.message }));
+      if (r.status === 'removed') results.push({ name: t.label, status: opts.dryRun ? 'would-remove' : 'removed', detail: `took Phaedo's section out of ${t.file}` });
+      else if (r.status === 'error') results.push({ name: t.label, status: 'error', detail: `${r.error} (${t.file})` });
+    }
   }
   // Capture-model on-switch (state-dir config file; see applyCaptureModelConfig).
   if (action === 'install' && opts.captureModel !== undefined) {

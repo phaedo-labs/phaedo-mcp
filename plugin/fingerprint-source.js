@@ -19,6 +19,7 @@ import { foldLocalCapture, isLocalCaptureOwner, localCaptureSessionCount } from 
 import { Capabilities, AuthoredSource } from './lib/phaedo-crypto.js';
 import { PhaedoError } from './errors.js';
 import { configDir, isDirectoryEdition } from './lib/config-dir.js';
+import { applyForgotten, readLearnedState } from './learned.js';
 
 // §4.1 protocol-identity normalization (consumer defense-in-depth, 2026-06-16).
 // A stored fingerprint from a producer that predates identity stamping (or whose
@@ -255,7 +256,16 @@ export function sourceOf(vd) {
   return s || { live: true, cachedAt: null, ageMs: 0 };
 }
 
-export async function loadFingerprint(baseDir) {
+// What the subject removed in `npm run learned` is taken out on EVERY read, so injection,
+// consult and the rules files all stop using it — even when the sessions keep showing it.
+// `unfiltered` is for that review screen alone, which has to list what was removed.
+const forgetting = (vd, { unfiltered = false } = {}) => (unfiltered ? vd : applyForgotten(vd, readLearnedState(defaultStateDir())));
+
+export async function loadFingerprint(baseDir, opts) {
+  return forgetting(await loadFingerprintUnfiltered(baseDir), opts);
+}
+
+async function loadFingerprintUnfiltered(baseDir) {
   // Explicit local source wins over phone pairing: if PHAEDO_FINGERPRINT names a
   // file, honor it and skip the phone entirely. Pointing at a concrete fingerprint
   // is an unambiguous "use THIS" — it lets a user force a local file and makes the
@@ -345,10 +355,10 @@ export async function loadFingerprint(baseDir) {
 // there.) Falls through to a live pull ONLY when no cache exists at all (first run on this
 // machine), which seeds it; run one phaedo_consult after pairing to seed without an
 // escalation in flight.
-export async function loadFingerprintPreferCache(baseDir) {
+export async function loadFingerprintPreferCache(baseDir, opts) {
   if (!process.env.PHAEDO_FINGERPRINT && hasPairingRecord(baseDir)) {
     const cached = await readCache(defaultStateDir());
-    if (cached) return stamp(foldConfigHome(normalizeIdentity(cached.vault)), cached);
+    if (cached) return forgetting(stamp(foldConfigHome(normalizeIdentity(cached.vault)), cached), opts);
   }
-  return loadFingerprint(baseDir);
+  return loadFingerprint(baseDir, opts);
 }

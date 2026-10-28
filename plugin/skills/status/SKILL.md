@@ -19,4 +19,6 @@ Check where this computer's Phaedo profile comes from.
    - **Starter profile:** say how much it has learned, as printed, and that pairing the phone app (`/phaedo:pair`) adds the rest.
    - **No profile:** nothing is set up yet. Using Claude Code builds a starter profile over a few sessions, or pair the phone with `/phaedo:pair`.
 
+3. End with the line it printed about this week (what Phaedo handled without interrupting them), as printed. If it also printed a line about things Phaedo learned that they haven't looked at, add it, as printed.
+
 Don't show file paths, ids or raw output unless the user asks.

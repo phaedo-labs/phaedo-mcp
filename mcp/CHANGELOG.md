@@ -1,6 +1,132 @@
 # Changelog — phaedo-mcp
 
-## 0.3.7 — unreleased
+## 0.3.13 — unreleased
+
+### Learn from your ChatGPT or Claude history
+
+`npm run import -- <export.zip | conversations.json>` (plugin: `/phaedo:import`) reads the data
+export ChatGPT or Claude emails you. Format by shape; ChatGPT's branch tree followed along
+`current_node` (abandoned regenerations and tool/code turns skipped); Claude's content parts.
+
+- The last 365 days by default (`--all`, `--days N`, `--dry-run`): old habits shouldn't outweigh
+  current ones.
+- Each conversation goes through the shared capture spine (`turnsToBatch` → `foldBatchToSignals`,
+  regex detectors only) as its own session, keyed `chatgpt-import:<id>` / `claude-import:<id>` —
+  a re-import replaces, never doubles. One deposit at the end when paired (the phone keeps one
+  snapshot per source, so no phone change); unpaired, it becomes the starter profile.
+- Discard-raw: text in memory only; nothing but signal names and integers on disk (tested).
+- Zip via the system `unzip`, else `tar`. Not in the directory edition. Tests: history import 34.
+
+## 0.3.12 — unreleased
+
+### Here's what I learned — keep it or remove it
+
+`npm run learned` (plugin: `/phaedo:learned`) lists every trait Phaedo inferred from how the
+subject works (`evidence_basis: observed` — never interview answers or rules) as one sentence
+from the shared phrasebook (`trait-phrases.js`), numbered, most-seen first.
+
+- **Merged and checked:** values that are the same choice are one item (0.8 and 0.85 "favor
+  quality"); items for the same field that are different choices are flagged "disagrees with
+  #n; keep the one that's right" (never for list traits: bullets and headings can both hold).
+- **Remove** stops an item shaping answers, consults and the rules files on this computer: the
+  forget list is applied on every profile read (`loadFingerprint`, `loadFingerprintPreferCache`),
+  so a pattern the sessions keep showing stays removed. Never touches self-reported signals.
+  `--keep`, `--forgotten`, `--restore`. Removing from the phone's profile stays the app's job.
+- **On disk:** `learned.json` in the state dir — field names and value digests only.
+- `/phaedo:status` (`pull.js`) adds a line when there are unreviewed items. Tests: learned 37.
+
+## 0.3.11 — unreleased
+
+### The merge check in Cursor, Copilot CLI, Codex and Gemini CLI
+
+`npm run setup:agent-hooks` wires `hooks/agent-hook.mjs` into each agent found: Cursor
+(`beforeShellExecution` + `beforeMCPExecution`), Copilot CLI (`preToolUse`, its own
+`~/.copilot/hooks/phaedo.json`), Codex (`PreToolUse` in `~/.codex/hooks.json`) and Gemini CLI
+(`BeforeTool` in `~/.gemini/settings.json`). Each agent's input is turned into the Claude Code
+shape and runs the same classification, consult and receipt path as the ship hook; receipts name
+the agent (`cursor/ship-hook`, …).
+
+- **Never allow.** Cursor and Copilot get a real `ask` with Phaedo's reason. Codex and Gemini
+  can't prompt from a hook (Codex marks `ask` unsupported; Gemini has allow/deny only), so the
+  action is paused once with the reason; the identical call within 15 minutes passes without a
+  second consult — a pause, never a wall or a loop.
+- **Fail-safe** everywhere — and on Copilot a crashing hook denies, so every path exits 0.
+- Entries merge beside the user's own hooks, with a backup; unparseable files are refused;
+  uninstall removes them (Copilot's own file is deleted). Codex needs `/hooks` trust once.
+- Antigravity documents no hooks: profile only (`npm run rules`). Outcomes are not yet recorded
+  in these agents. `pre-ship.mjs` `realDeps` now takes the agent id. Tests: agent hooks 77.
+
+## 0.3.10 — unreleased
+
+### Share what Phaedo learned with your other agents
+
+Codex, Copilot CLI, Gemini CLI and Antigravity have no session-start hook, but each reads a
+user-level instructions file every session. `npm run rules` (plugin: `/phaedo:rules`) writes a
+short version of the profile there — operating rules, how to respond, how this user thinks
+(≈3.5 KB; capped at 6,000 characters, under Antigravity's ~12k and Codex's 32 KiB combined).
+
+- **Where:** `~/.codex/AGENTS.md` (honours `CODEX_HOME`), `~/.copilot/copilot-instructions.md`,
+  `~/.gemini/GEMINI.md` (Gemini CLI and Antigravity share it) — each one whose folder exists, or
+  `--for codex,copilot,gemini,claude`. Cursor has no user-level rules file, so `--project <dir>`
+  writes `.cursor/rules/phaedo.mdc` (`alwaysApply: true`) and lists it in that repo's
+  `.git/info/exclude` — never a committed file. Never a repository's own AGENTS.md: it would be
+  committed and shared.
+- **A marked block,** replaced in place; the rest of the file is untouched. Damaged markers are
+  refused, not guessed at. `--remove` takes it out; `--dry-run` shows the text first.
+- **Kept current, opt-in only:** the SessionStart hook refreshes files that already carry the block
+  and never adds one anywhere new (`refreshExisting`). Uninstall takes the blocks out.
+- Not in the directory edition (it changes other agents' behaviour with the profile).
+- Disclosed: plugin README, mcp README, privacy policy, data inventory — the text is plain and
+  those agents send it to their providers. Tests: rules-files 52, install 110, plugin.
+
+## 0.3.9 — unreleased
+
+### Your personal reviewer inside Claude Code's auto mode
+
+Auto mode's reviewer judges actions by type. Phaedo now asks whether *this* person would want to
+see an action, and forces a prompt (a hook `ask` prompts even in auto mode) when they would.
+
+- **More of what people disagree about** (`ship-actions.js`): force-push any branch, delete a
+  remote branch, open a PR, comment on or review a PR or issue, publish a package (never a
+  `--dry-run`), create a release, and deploys beyond Fly (`vercel --prod`, `netlify deploy --prod`,
+  `firebase deploy`, `terraform apply|destroy`, `kubectl apply|delete`).
+- **Connected apps, not just the shell:** MCP tool calls whose name says send/post/reply/forward/
+  comment/share/invite, pay/purchase/transfer/checkout, delete/purge/destroy/trash, or merge —
+  except Phaedo's own tools (`classifyMcpCall`, matcher `SHIP_HOOK_MATCHER` in the installer and
+  both plugin editions). The receipt binds the tool call and previews only its target
+  (recipient, channel, subject, amount), never a message body; an amount counts only on a payment.
+- **A personal reason on the prompt** (`personalWhy`): your matching rule when one decided it,
+  else what's at stake ("it can't be undone", "it spends $250").
+- **Auto mode outcomes:** a yes on the prompt Phaedo forced in auto mode is now recorded as
+  `approved` (it was ignored, on the assumption no person answers in auto mode); a prompt Phaedo
+  didn't force is still the classifier's and records nothing.
+- `ship-readout` names the new kinds. Tests: ship-actions 96, ship-hook 206, install, plugin 81.
+- Disclosures updated (plugin READMEs, privacy policy, data inventory): decision records can name
+  a connected-app action's target, never the message.
+
+## 0.3.8 — 2026-10-27
+
+### The reason matches the answer; Phaedo shows what it did for you
+
+- **A consult's reason now agrees with its answer.** A cautious person's low-stakes, reversible
+  action came back "proceed_with_note" with the reason "the subject favors caution and human
+  review" — an answer and a reason pointing opposite ways. The reason now says how the person
+  leans *and* what that means for this action ("…favors caution and human review, but this one is
+  reversible and low-stakes, so go ahead and tell them what you did"). `actionApprovalHint`, pinned
+  over all 96 answer × lean × situation combinations in `test-consult.mjs`.
+- **The server overview fits Codex.** Codex keeps the first 512 characters of a server's
+  instructions; the three rules (load, consult, record) now come first and fit inside them, in both
+  editions. Pinned by `test-smoke.mjs`.
+- **"This week Phaedo handled N decisions without interrupting you."** `weekly.js` counts the last
+  7 days of decision records: went ahead, stopped, brought to you, too unclear to call. Shown by
+  `/phaedo:status` (via `pull.js`), by `npm run week`, and on the phone's Activity screen (it rides
+  the receipts digest as `week`). `test-weekly.mjs`.
+- **"Why you're seeing this" on every phone approval.** The approval payload carries `why_asked`,
+  one plain line for the person built from the rule that matched or the stakes ("Phaedo asked
+  because it can't be undone and it spends $1,250, and you usually want to see those yourself").
+  The phone shows it under a label; older MCPs fall back to the agent-facing rationale.
+
+## 0.3.7 — 2026-10-27
 
 ### A directory edition of the Claude plugin
 

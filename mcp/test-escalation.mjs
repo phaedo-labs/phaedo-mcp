@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { Phaedo, b64uEnc } from './lib/phaedo-crypto.js';
 import {
-  buildEscalationPayload, buildEscalationDeposit, unwrapEscalationResponse,
+  buildEscalationPayload, buildEscalationDeposit, unwrapEscalationResponse, whyAsked,
   requestEscalationDecision, shouldEscalate, isConsequential,
   mergeEscalationPolicy, loadEscalationPolicy, resolveClarifyMode,
 } from './escalation.js';
@@ -388,6 +388,21 @@ try {
 } finally {
   if (mockPhoneWs) try { mockPhoneWs.close() } catch {}
   if (relay) relay.kill('SIGTERM');
+}
+
+console.log('\n"why you\'re seeing this" — one plain line for the person, not the agent');
+{
+  const rule = whyAsked({ action_descriptor: {} }, { signal: 'escalate', rationale_hint: 'Per your standing rule: ask me before paying anyone new.' });
+  ok(rule === 'One of your rules says to check with you: ask me before paying anyone new.', `a matched rule names the rule: ${rule}`);
+  const money = whyAsked({ action_descriptor: { reversible: false, amount: 1250 } }, { signal: 'escalate', rationale_hint: 'x' });
+  ok(money === "Phaedo asked because it can't be undone and it spends $1,250, and you usually want to see those yourself.", `stakes are named: ${money}`);
+  ok(/it's high-stakes/.test(whyAsked({ action_descriptor: { magnitude: 'high' } }, { signal: 'escalate' })), 'high magnitude, no amount → "high-stakes"');
+  ok(/isn't clear enough what you'd want/.test(whyAsked({ action_descriptor: { reversible: false } }, { signal: 'clarify' })), 'clarify says the intent is unclear');
+  ok(/wasn't confident/.test(whyAsked({}, { signal: 'escalate' })), 'nothing to go on → says Phaedo was not confident');
+  for (const w of [rule, money, whyAsked({}, {}), whyAsked({ action_descriptor: { reversible: false } }, { signal: 'clarify' })]) {
+    ok(!/subject/.test(w) && w.length <= 200, `speaks to the person, briefly: ${w}`);
+  }
+  ok(buildEscalationPayload(REQ, RESP).why_asked === whyAsked(REQ, RESP), 'the payload carries it');
 }
 
 console.log(`\n✓ escalation: ${pass} checks passed (payload + crypto + orchestrator + real relay)`);

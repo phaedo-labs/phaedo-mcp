@@ -181,7 +181,35 @@ export function buildEscalationPayload(consultRequest = {}, consultResponse = {}
     },
     signal: clip(consultResponse.signal, 40),
     rationale_hint: clip(consultResponse.rationale_hint, 280),
+    why_asked: whyAsked(consultRequest, consultResponse),
   };
+}
+
+// WHY YOU'RE SEEING THIS — one plain line for the person on the phone, not the agent.
+// `rationale_hint` is written to the agent ("the subject favors caution… so check with them
+// first"); shown to the subject it reads as Phaedo talking about them in the third person, and it
+// never says what TRIGGERED the interruption. Pushary's default prompt rate flip-flopped twice in
+// October because users couldn't tell why they were being asked; a visible reason on every card
+// is the fix. PURE, and built only from what is already in the payload: the agent's descriptor,
+// the signal, and — when a standing rule decided it — that rule's own note. Never vault content.
+export function whyAsked(consultRequest = {}, consultResponse = {}) {
+  const ad = (consultRequest.action_descriptor && typeof consultRequest.action_descriptor === 'object') ? consultRequest.action_descriptor : {};
+  const hint = typeof consultResponse.rationale_hint === 'string' ? consultResponse.rationale_hint : '';
+  const rule = /^Per your standing rule: (.+?)\.?$/.exec(hint.trim());
+  if (rule) return `One of your rules says to check with you: ${rule[1]}.`.slice(0, 200);
+  const reasons = [];
+  if (ad.reversible === false) reasons.push("it can't be undone");
+  if (typeof ad.amount === 'number' && isFinite(ad.amount) && ad.amount > 0) {
+    reasons.push(`it spends $${ad.amount.toLocaleString('en-US', { maximumFractionDigits: 2 })}`);
+  } else if (ad.magnitude === 'high') reasons.push("it's high-stakes");
+  const what = reasons.length ? reasons.join(' and ') : null;
+  const signal = String(consultResponse.signal || '');
+  if (signal === 'clarify') {
+    return what ? `Phaedo asked because ${what}, and it isn't clear enough what you'd want.`
+                : "Phaedo asked because it isn't clear enough what you'd want here.";
+  }
+  return what ? `Phaedo asked because ${what}, and you usually want to see those yourself.`
+              : "Phaedo asked because it wasn't confident you'd want this done without you.";
 }
 
 // Seal the payload under fp_sync_key into the deposit body { request_id, envelope,

@@ -21,10 +21,20 @@ const ASKING = new Set(['escalate', 'clarify', 'decline']);
 export function actionKind(summary) {
   const s = String(summary || '');
   if (/^(admin-)?merge\b/.test(s)) return 'merge';
-  if (/^deploy\b/.test(s)) return 'deploy';
+  if (/^deploy\b|^terraform |^kubectl /.test(s)) return 'deploy';
   if (/^submit\b/.test(s)) return 'phone submit';
   if (/^phone build\b/.test(s)) return 'phone build';
-  if (/push/.test(s)) return 'push to main';
+  if (/^(force-push to main|push directly to main)$/.test(s)) return 'push to main';
+  // The personal reviewer's kinds (ship-actions.js, 2026-10-27).
+  if (/^force-push\b/.test(s)) return 'force-push';
+  if (/^delete remote branch\b/.test(s)) return 'delete branch';
+  if (/^open a pull request$/.test(s)) return 'open PR';
+  if (/^(post a comment|approve a pull request|request changes)/.test(s)) return 'comment or review';
+  if (/^publish a package\b/.test(s)) return 'publish';
+  if (/^create a GitHub release\b/.test(s)) return 'release';
+  if (/^send or post a message\b/.test(s)) return 'message';
+  if (/^make a payment\b/.test(s)) return 'payment';
+  if (/^(delete something|move something to the trash)\b/.test(s)) return 'delete';
   return 'other';
 }
 

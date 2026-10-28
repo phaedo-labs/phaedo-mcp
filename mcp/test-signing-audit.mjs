@@ -30,7 +30,9 @@ console.log('\nrecord captures a digest of the SIGNED bytes, not the content or 
   ok(rec.signed_at === '2026-07-24T12:00:00Z', 'signed_at taken from the mandate');
   const s = JSON.stringify(rec);
   ok(!s.includes('AAAA'), 'the signature bytes are NOT stored');
-  ok(!s.includes('500'), 'the raw amount is NOT stored (digest + counts only)');
+  // Checked by field, not by searching the JSON for "500": the record carries a random audit_id,
+  // and a UUID containing "500" made the substring check fail at random.
+  ok(!('amount' in rec) && !Object.values(rec).some((v) => v === 500 || v === '500'), 'the raw amount is NOT stored (digest + counts only)');
   // The digest changes if the signed terms change — it is a real commitment to what was signed.
   const other = buildSigningAuditRecord({ requestId: 'r1', mandate: { ...mandate, amount: 999 }, clientId: 'c_abc' });
   ok(other.mandate_digest !== rec.mandate_digest, 'a different mandate yields a different digest');

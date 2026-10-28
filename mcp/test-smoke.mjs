@@ -93,6 +93,10 @@ async function integration() {
   ok(['phaedo_request_injection', 'phaedo_consult', 'phaedo_record_outcome'].every((t) => instructions.includes(t)),
      'server instructions name the session-start, consult and outcome tools');
   ok(/no Phaedo profile is set up/i.test(instructions), 'server instructions say what to do when there is no profile');
+  // Codex keeps only the first 512 characters: the three rules must all fit inside them.
+  const core = instructions.slice(0, 512);
+  ok(['phaedo_request_injection', 'phaedo_consult', 'phaedo_record_outcome'].every((t) => core.includes(t)),
+     'the three rules (load, consult, record) fit in the first 512 characters Codex reads');
 
   const tools = await client.listTools();
   ok(tools.tools.some(t => t.name === 'phaedo_request_injection'), 'tool registered');

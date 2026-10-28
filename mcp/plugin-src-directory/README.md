@@ -3,8 +3,11 @@
 Phaedo keeps a profile of how you like work done and how you decide, on your own devices, in
 the Phaedo phone app. This plugin lets Claude use it:
 
-- **Checks with you before acting.** Before Claude merges, deploys or publishes, it asks
-  Phaedo whether you'd want it to go ahead, and asks you when the stakes are high.
+- **Checks with you before acting.** Before Claude merges, deploys, publishes, force-pushes,
+  comments for you, or sends, pays or deletes through a connected app, it asks Phaedo whether
+  you'd want it to go ahead. When you would want to see it, you get a prompt — even in auto
+  mode — with the reason ("it can't be undone", or the rule of yours that says so). Otherwise
+  it stays quiet.
 - **Sends decisions to your phone.** A decision that needs you shows up as an approve / deny
   card on your phone.
 - **Signs spending approvals.** When an agent needs your permission to spend, you approve it
@@ -30,12 +33,14 @@ your sessions. Your profile comes only from the Phaedo phone app.
 ## What it runs, stores and sends
 
 - **On your computer:** a local MCP server (`server.js`) and one check that runs around
-  terminal commands, to spot a merge, deploy or publish and ask Phaedo first. Everything is
+  terminal commands and connected-app actions, to spot a merge, deploy, publish, message,
+  payment or delete and ask Phaedo first. Everything is
   plain JavaScript in this folder.
 - **What it stores:** in `~/.phaedo-mcp` on your computer — the pairing with your phone, an
   encrypted copy of your profile for when the phone is offline, and a record of each decision it
-  was asked about (the action, a short description, any amount, what Phaedo answered, and what
-  you decided).
+  was asked about (the action, a short description, any amount, who or what it was aimed at —
+  such as a recipient or channel, never a message itself — what Phaedo answered, and what you
+  decided).
 - **What it sends:** encrypted messages between this computer and your phone — directly over
   your Wi-Fi, or through Phaedo's relay (`phaedo-relay.fly.dev`) when you're on different
   networks. The relay can't read them. To judge how big or risky a merge is, the check runs your

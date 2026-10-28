@@ -19,7 +19,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { buildPlugin, marketplaceManifest, mcpbManifest } from './build-plugin.mjs';
 import { configDir, LAYOUT_MARKER } from './lib/config-dir.js';
-import { SHIP_HOOK_EVENTS } from './install.mjs';
+import { SHIP_HOOK_EVENTS, SHIP_HOOK_MATCHER } from './install.mjs';
 
 const MCP = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(MCP, 'package.json'), 'utf8'));
@@ -66,16 +66,19 @@ try {
     const events = Object.keys(hooks).sort();
     ok(JSON.stringify(events) === JSON.stringify(['SessionEnd', 'SessionStart', 'Stop', ...SHIP_HOOK_EVENTS].sort()),
       'the plugin wires the same hook events the installer does');
-    for (const ev of SHIP_HOOK_EVENTS) ok(hooks[ev][0].matcher === 'Bash', `${ev}: the merge check only looks at Bash commands`);
+    for (const ev of SHIP_HOOK_EVENTS) ok(hooks[ev][0].matcher === SHIP_HOOK_MATCHER, `${ev}: the reviewer sees the same calls as the installer wires (shell + consequential tools)`);
     for (const h of Object.values(hooks).flat().flatMap((g) => g.hooks)) {
       ok(h.command === 'node' && h.args[0].startsWith('${CLAUDE_PLUGIN_ROOT}/'), `exec-form hook, path from the plugin root: ${h.args[0]}`);
       ok(existsSync(h.args[0].replace('${CLAUDE_PLUGIN_ROOT}', out)), `hook script exists: ${h.args[0]}`);
     }
 
-    for (const skill of ['pair', 'status']) {
+    for (const skill of ['pair', 'status', 'rules', 'learned', 'import']) {
       const md = readFileSync(join(out, 'skills', skill, 'SKILL.md'), 'utf8');
       ok(/^---\ndescription: .+\n[\s\S]*?---\n/.test(md), `/phaedo:${skill} has front matter with a description`);
     }
+    ok(existsSync(join(out, 'rules-files.js')), '/phaedo:rules has the script it runs');
+    ok(existsSync(join(out, 'learned.js')), '/phaedo:learned has the script it runs');
+    ok(existsSync(join(out, 'history-import.js')), '/phaedo:import has the script it runs');
 
     // The directory's published limits (claude.com/docs/plugins/pre-submission-checklist).
     const words = readFileSync(join(out, 'README.md'), 'utf8').replace(/```[\s\S]*?```/g, '').split(/\s+/).filter(Boolean).length;
@@ -133,12 +136,13 @@ try {
   {
     const dir = buildPlugin(join(tmp, 'plugin-directory'), { edition: 'directory' });
     const drel = walk(dir).map((f) => relative(dir, f));
-    for (const gone of ['hooks/session-start.mjs', 'hooks/session-end.mjs', 'hooks/stop-capture.mjs', 'capture-a11y.js', 'capture-sync.js']) {
+    for (const gone of ['hooks/session-start.mjs', 'hooks/session-end.mjs', 'hooks/stop-capture.mjs', 'capture-a11y.js', 'capture-sync.js', 'rules-files.js', 'history-import.js']) {
       ok(!drel.includes(gone), `leaves out ${gone}`);
     }
     ok(!drel.some((r) => r.startsWith('vendor/capture/') || r.startsWith('vendor/extraction/')), 'leaves out the transcript parser and the learning modules');
     const dhooks = JSON.parse(readFileSync(join(dir, 'hooks', 'hooks.json'), 'utf8')).hooks;
     ok(JSON.stringify(Object.keys(dhooks).sort()) === JSON.stringify([...SHIP_HOOK_EVENTS].sort()), 'wires only the merge check, no session hooks');
+    for (const ev of SHIP_HOOK_EVENTS) ok(dhooks[ev][0].matcher === SHIP_HOOK_MATCHER, `${ev}: same reviewer matcher in the directory edition`);
     for (const h of Object.values(dhooks).flat().flatMap((g) => g.hooks)) ok(existsSync(h.args[0].replace('${CLAUDE_PLUGIN_ROOT}', dir)), `hook script exists: ${h.args[0]}`);
     ok(JSON.parse(readFileSync(join(dir, LAYOUT_MARKER), 'utf8')).edition === 'directory', 'its marker says directory edition');
     const dpkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));

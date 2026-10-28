@@ -6,7 +6,7 @@
 // Run: node test-ship-actions.mjs   (from mcp/)
 
 import assert from 'assert';
-import { classifyShipCommand, splitCommands, words } from './ship-actions.js';
+import { classifyShipCommand, splitCommands, words, classifyMcpCall, classifyToolCall, MCP_HOOK_MATCHER } from './ship-actions.js';
 import { normalizeActionBinding } from './action-binding.js';
 
 let pass = 0;
@@ -29,7 +29,7 @@ ok(cls('CI=1 fly deploy') === 'deploy', 'leading env assignment');
 
 // ── Not ship actions ───────────────────────────────────────────────────────────
 for (const cmd of [
-  'git status', 'gh pr view 372', 'gh pr create --fill', 'gh pr list --state merged',
+  'git status', 'gh pr view 372', 'gh pr list --state merged', 'gh release list', 'npm publish --dry-run',
   'git push -u origin claude/consult-before-ship', 'git push origin feature-main-fix',
   'fly status', 'fly logs -a phaedo-relay', 'eas build:list', 'npx eas whoami',
   'echo "fly deploy"', 'grep -rn "gh pr merge" docs', 'git commit -m "after fly deploy && gh pr merge"',
@@ -84,5 +84,53 @@ ok(long.action_binding.arguments_preview.length <= 120, 'preview clipped');
 ok(splitCommands('a && b || c; d | e\nf').length === 6, 'splits on && || ; | newline');
 ok(splitCommands('git commit -m "x && y"').length === 1, 'quoted && does not split');
 ok(words('FOO=1 BAR=2 npx -y eas build')[0] === 'eas', 'env + npx flags stripped');
+
+// ── The personal reviewer's classes (2026-10-27) ─────────────────────────────
+for (const [cmd, cls_, rev, mag] of [
+  ['git push --force origin feature', 'force_push', false, 'high'],
+  ['git push origin +feature', 'force_push', false, 'high'],
+  ['git push origin --delete old-branch', 'delete_branch', false, 'medium'],
+  ['git push origin :old-branch', 'delete_branch', false, 'medium'],
+  ['gh pr create --fill', 'open_pr', true, 'low'],
+  ['gh pr comment 12 -b "looks good"', 'comment', false, 'medium'],
+  ['gh issue comment 3 -b hi', 'comment', false, 'medium'],
+  ['gh pr review 12 --approve', 'comment', false, 'medium'],
+  ['npm publish', 'publish', false, 'high'],
+  ['yarn npm publish', 'publish', false, 'high'],
+  ['cargo publish', 'publish', false, 'high'],
+  ['gh release create v1.2.0', 'release', true, 'medium'],
+  ['vercel --prod', 'deploy_other', true, 'high'],
+  ['terraform destroy -auto-approve', 'deploy_other', false, 'high'],
+  ['kubectl delete pod web-1', 'deploy_other', false, 'high'],
+]) {
+  const r = classifyShipCommand(cmd);
+  ok(r && r.class === cls_ && r.action_descriptor.reversible === rev && r.action_descriptor.magnitude === mag, `${cmd} → ${cls_} (reversible ${rev}, ${mag})`);
+}
+ok(cls('git push -f origin main') === 'push_main', 'a force-push to main stays push_main (it names main)');
+ok(classifyShipCommand('gh pr review 12 --approve').summary === 'approve a pull request', 'approving is named as approving');
+ok(cls('git push origin feature') === null && cls('vercel') === null && cls('terraform plan') === null, 'ordinary pushes, preview deploys and plans stay out');
+
+// ── Actions through connected tools (MCP) ─────────────────────────────────────
+{
+  const send = classifyMcpCall('mcp__slack__post_message', { channel: '#eng', text: 'secret body' });
+  ok(send.class === 'mcp_send' && send.action_descriptor.domain === 'communication' && send.action_descriptor.reversible === false, 'a post is a send: communication, can\'t be undone');
+  ok(send.summary === 'send or post a message via slack', 'named by the app');
+  ok(/channel: #eng/.test(send.action_binding.arguments_preview) && !/secret body/.test(send.action_binding.arguments_preview), 'the preview names the target, never the message');
+  ok(normalizeActionBinding(send.action_binding), 'its binding is a valid §10.2 binding');
+  const pay = classifyMcpCall('mcp__payments__create_payment', { amount: 250 });
+  ok(pay.class === 'mcp_spend' && pay.action_descriptor.amount === 250 && pay.action_descriptor.magnitude === 'high', 'a payment carries its amount, high stakes');
+  ok(classifyMcpCall('mcp__slack__post_message', { amount: 250 }).action_descriptor.amount === undefined, 'an amount field on a message is not money');
+  ok(classifyMcpCall('mcp__597bdf05-a786-42e1-aee1-7c30f53d615a__send_message', {}).summary === 'send or post a message via a connected app', 'an id-named connector is "a connected app"');
+  ok(classifyMcpCall('mcp__drive__trash_file', {}).action_descriptor.reversible === true, 'trash is recoverable');
+  ok(classifyMcpCall('mcp__github__merge_pull_request', {}).class === 'mcp_merge', 'a merge through a tool');
+  for (const name of ['mcp__gmail__create_draft', 'mcp__gmail__search_threads', 'mcp__gmail__get_message', 'mcp__PDF_Tools__reorder_pdf_pages',
+    'mcp__phaedo__phaedo_escalate', 'mcp__plugin_phaedo_phaedo__phaedo_sign_mandate', 'Bash', 'Read', 'not-a-tool']) {
+    ok(classifyMcpCall(name, {}) === null, `not a decision: ${name}`);
+  }
+  ok(classifyToolCall('Bash', { command: 'npm publish' }).class === 'publish' && classifyToolCall('mcp__slack__post_message', {}).class === 'mcp_send', 'classifyToolCall routes both kinds');
+  const m = new RegExp(`^(?:${MCP_HOOK_MATCHER})$`);
+  ok(['mcp__slack__post_message', 'mcp__payments__create_payment', 'mcp__drive__trash_file'].every((n) => m.test(n)), 'the hook matcher reaches the tools it should');
+  ok(!m.test('mcp__gmail__search_threads') && !m.test('Bash'), 'and not read-only tools (Bash has its own matcher)');
+}
 
 console.log(`✓ test-ship-actions: ${pass} checks passed`);

@@ -13,7 +13,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnSync } from 'child_process';
 import {
-  runShipHook, readState, writeState, promptReason, commandHash,
+  runShipHook, readState, writeState, promptReason, commandHash, callHash, personalWhy,
   ASKING_SIGNALS, STALE_PROFILE_DAYS, AGENT_ID,
   ciStateFromRollup, lookupCiState, CI_RAISES,
   lookupPrFacts, diffStakes, isSensitivePath, parseSensitiveList, stakesValue, raiseWords,
@@ -123,12 +123,27 @@ try {
     await runShipHook(post({ permission_mode: 'bypassPermissions' }), deps);
     ok(log.marks[0]?.[1] === 'approved', 'bypass + prompt actually shown → approved');
   }
-  for (const mode of ['auto', 'dontAsk']) {
+  {
+    // dontAsk never shows a person a prompt.
     const { deps, log } = mk('escalate');
-    await runShipHook(pre(CMD, { permission_mode: mode }), deps);
-    await runShipHook(perm(CMD, { permission_mode: mode }), deps);
-    await runShipHook(post({ permission_mode: mode }), deps);
-    ok(log.marks.length === 0, `${mode}: a PermissionRequest decided without a person is not a yes`);
+    await runShipHook(pre(CMD, { permission_mode: 'dontAsk' }), deps);
+    await runShipHook(perm(CMD, { permission_mode: 'dontAsk' }), deps);
+    await runShipHook(post({ permission_mode: 'dontAsk' }), deps);
+    ok(log.marks.length === 0, 'dontAsk: a PermissionRequest decided without a person is not a yes');
+  }
+  {
+    // Auto mode: the classifier decides without a person — unless Phaedo's `ask` forced a real
+    // prompt ("a hook's ask also forces a permission prompt in auto mode", hooks reference).
+    const asked = mk('escalate');
+    await runShipHook(pre(CMD, { permission_mode: 'auto' }), asked.deps);
+    await runShipHook(perm(CMD, { permission_mode: 'auto' }), asked.deps);
+    await runShipHook(post({ permission_mode: 'auto' }), asked.deps);
+    ok(asked.log.marks[0]?.[1] === 'approved', 'auto + Phaedo forced the prompt + it ran → the subject said yes → approved');
+    const quiet = mk('proceed');
+    await runShipHook(pre(CMD, { permission_mode: 'auto' }), quiet.deps);
+    await runShipHook(perm(CMD, { permission_mode: 'auto' }), quiet.deps);
+    await runShipHook(post({ permission_mode: 'auto' }), quiet.deps);
+    ok(quiet.log.marks.length === 0, 'auto + Phaedo did not ask → a PermissionRequest is the classifier\'s, not a yes');
   }
   {
     const { deps } = mk('decline');
@@ -449,6 +464,41 @@ try {
     writeFileSync(badFp, '{"nope": true}');
     const broken = spawnSync(process.execPath, [script], { input: JSON.stringify(pre()), env: { ...env, PHAEDO_FINGERPRINT: badFp }, encoding: 'utf8' });
     ok(broken.status === 0 && broken.stdout === '', 'script: unusable fingerprint → exit 0, no output');
+  }
+  // ── The personal reviewer: connected-tool actions, and a reason that's about THIS person ──
+  {
+    const mcp = (name, extra = {}) => ({ hook_event_name: name, tool_name: 'mcp__slack__post_message', tool_use_id: 'tu-m1',
+      permission_mode: 'auto', tool_input: { channel: '#eng', text: 'deploying now' }, ...extra });
+    const { deps, log } = mk('escalate');
+    const out = await runShipHook(mcp('PreToolUse'), deps);
+    const h = out.hookSpecificOutput;
+    ok(h.permissionDecision === 'ask', 'a cautious answer on a Slack post → ask (forces a prompt even in auto mode)');
+    ok(h.permissionDecisionReason === "Phaedo thinks you'd want to OK this yourself: send or post a message via slack — it can't be undone.",
+      `the prompt says why for this person: ${h.permissionDecisionReason}`);
+    ok(log.consults[0].action_descriptor.domain === 'communication' && log.consults[0].action_binding.tool_name === 'mcp__slack__post_message',
+      'consulted as communication, bound to the tool');
+    ok(!/deploying now/.test(JSON.stringify(log.consults[0])), 'the message body never reaches the consult or the receipt');
+    // PermissionRequest has no tool_use_id: matched by the call's identity, same as Bash.
+    const permEv = mcp('PermissionRequest'); delete permEv.tool_use_id;
+    ok(readState(deps.statePath).pending['tu-m1'].cmd_hash === callHash(permEv), 'a tool call is matched across events by its input');
+    await runShipHook(permEv, deps);
+    await runShipHook(mcp('PostToolUse'), deps);
+    ok(log.marks.length === 1 && log.marks[0][1] === 'approved', 'the subject said yes on the prompt → approved, as for Bash');
+
+    const { deps: d2, log: l2 } = mk('proceed');
+    const quiet = await runShipHook(mcp('PreToolUse', { tool_use_id: 'tu-m2' }), d2);
+    ok(!('permissionDecision' in quiet.hookSpecificOutput) && l2.receipts.length === 1, 'a permissive answer stays quiet — the reviewer only asks when it should');
+    ok(await runShipHook(mcp('PreToolUse', { tool_name: 'mcp__gmail__search_threads' }), d2) === null, 'read-only tools are never reviewed');
+    ok(await runShipHook(mcp('PreToolUse', { tool_name: 'mcp__phaedo__phaedo_escalate' }), d2) === null, 'nor Phaedo\'s own tools');
+
+    ok(personalWhy({ reversible: false, amount: 1250 }, {}) === "it can't be undone and it spends $1,250", 'stakes named plainly');
+    ok(personalWhy({ reversible: false }, { rationale_hint: 'Per your standing rule: ask me before posting in #eng.' }) === 'your rule: ask me before posting in #eng',
+      'a matched rule wins over the stakes');
+    ok(personalWhy({ reversible: true, magnitude: 'low' }, {}) === '', 'nothing at stake → no extra words');
+    ok(promptReason('escalate', 'force-push feature', '', "it can't be undone") === "Phaedo thinks you'd want to OK this yourself: force-push feature — it can't be undone.",
+      'promptReason adds the personal reason');
+    ok(promptReason('escalate', 'merge PR #3', 'the checks are failing', "it can't be undone").includes('the checks are failing; it can\'t be undone'),
+      'GitHub facts and the personal reason read together');
   }
 } finally {
   rmSync(dir, { recursive: true, force: true });
