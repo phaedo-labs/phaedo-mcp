@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Phaedo — Claude Code ship hook (PreToolUse, PermissionRequest, PostToolUse,
-// PostToolUseFailure on Bash).
+// PostToolUseFailure on Bash; UserPromptSubmit and Stop to catch a "no").
 //
 // WHY THIS EXISTS. The precedent track is starved: no consultation has been written since
 // 2026-07-28, so agreement, calibration and override learning have nothing to read. The
@@ -25,7 +25,13 @@
 //     consult answered, and in any permission mode — a yes on a `proceed` is the scoreable
 //     case agreement needs.
 //   - prompt shown, then declined → Claude Code fires NO hook for a manual denial
-//     (documented), so the agent is told the receipt id up front and records `rejected`.
+//     (documented). It does write the denial into the session transcript, marked
+//     `toolDenialKind: "user-rejected"` on the call's tool_result. So at the subject's next
+//     prompt (UserPromptSubmit), or when the turn ends (Stop — a "no, do this instead"
+//     continues the turn), the hook reads the transcript's tail for its own open calls and
+//     records `rejected`, or `modified` when the subject said what to do instead. A denial by
+//     auto mode's classifier or a permission rule carries a different kind and records
+//     nothing: only a person's no counts. An outcome the agent already recorded is kept.
 //   - no prompt (bypass mode, an allow rule) → nothing recorded. After the run the agent is
 //     told so, and records the subject's reaction only if they give one. Silence is never
 //     approval.
@@ -43,6 +49,7 @@ import { createHash } from 'crypto';
 import { execFile } from 'child_process';
 import { classifyShipCommand, classifyToolCall } from '../ship-actions.js';
 import { isMainModule } from '../lib/is-main.js';
+import { isDirectoryEdition } from '../lib/config-dir.js';
 
 const MCP_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -61,6 +68,13 @@ export const ASKING_SIGNALS = new Set(['escalate', 'clarify', 'decline']);
 // but it can't approve the call silently" — hooks reference). That prompt is the personal
 // reviewer's whole point, so a yes on it is the subject's and is recorded.
 const NO_HUMAN_MODES = new Set(['auto', 'dontAsk']);
+
+// The turn events that look for a "no". Every prompt fires one, so they stay cheap: a small
+// state read, and the transcript only when this session has a consult still open.
+export const TURN_EVENTS = new Set(['UserPromptSubmit', 'Stop']);
+// How a person's denial is marked in the transcript (Claude Code), and how far back to read.
+export const USER_DENIAL = 'user-rejected';
+export const TRANSCRIPT_TAIL_BYTES = 4 * 1024 * 1024;
 
 // The profile is read from the at-rest cache, which only a live read refreshes. Past this
 // age the agent is told once a day, so the subject hears about it in plain words.
@@ -248,9 +262,14 @@ export function promptReason(signal, summary, why, personal = '') {
 
 // What the agent reads before the command. It carries the receipt id — the one handle
 // that attributes an outcome to THIS decision rather than whatever receipt is newest.
-export function preContext({ summary, signal, receiptId, asked, hint }) {
+export function preContext({ summary, signal, receiptId, asked, hint, recordsNo = false }) {
   const head = `Phaedo was consulted before this action (${summary}) and answered "${signal}"` +
     (hint ? ` — ${hint}` : '') + `. receipt_id: ${receiptId}.`;
+  if (asked && recordsNo) {
+    return `${head} Phaedo flagged it for the user, so they may be asked to confirm. A yes or a no on ` +
+      `the prompt is recorded automatically. If they later say they wanted it done differently, call ` +
+      `phaedo_record_outcome with this receipt_id and "modified".`;
+  }
   if (asked) {
     return `${head} Phaedo flagged it for the user, so they may be asked to confirm. If they decline, ` +
       `call phaedo_record_outcome with this receipt_id and "rejected" (or "modified" if they want it ` +
@@ -277,17 +296,63 @@ export function staleContext(days, mcpDir) {
 }
 
 /**
+ * What the transcript says became of each call in `ids`: Map id → { denied }, where `denied` is
+ * `rejected` or `modified` for a person's no (modified when they said what to do instead), and
+ * null for any other result (it ran, failed, or something other than a person refused it).
+ * A call with no result yet is absent. Reads only the tool_result entries. PURE.
+ */
+export function callResults(jsonl, ids) {
+  const want = new Set(ids);
+  const out = new Map();
+  if (!want.size) return out;
+  const words = (c) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map((p) => (typeof p?.text === 'string' ? p.text : '')).join('\n') : '');
+  for (const line of String(jsonl || '').split('\n')) {
+    if (!line.includes('tool_use_id')) continue;
+    let j;
+    try { j = JSON.parse(line); } catch { continue; }
+    for (const c of Array.isArray(j?.message?.content) ? j.message.content : []) {
+      if (c?.type !== 'tool_result' || !want.has(c.tool_use_id)) continue;
+      // Quitting the app mid-prompt is marked as a denial too; it is not a decision.
+      const byPerson = j.toolDenialKind === USER_DENIAL && !j.interruptedByShutdown;
+      out.set(c.tool_use_id, { denied: byPerson ? (/the user said:/i.test(words(c.content)) ? 'modified' : 'rejected') : null });
+    }
+  }
+  return out;
+}
+
+/**
  * One hook invocation. Pure apart from injected deps, so the whole flow is testable
  * without a vault, a receipt store or Claude Code.
  *
  * deps: { consult(req) → { response, drivers, source? }, writeReceipt({request,response,drivers}) → id,
- *         markOutcome(id, action), statePath, now, mcpDir? }
+ *         markOutcome(id, action, { keepExisting }?), statePath, now, mcpDir?,
+ *         readTranscript(path)? — present only where a transcript records denials (Claude Code) }
  * Returns the JSON object to print, or null for no output.
  */
 export async function runShipHook(input, deps) {
-  if (!reviewable(input)) return null;
   const now = deps.now ?? Date.now();
-  const ev = input.hook_event_name;
+  const ev = input?.hook_event_name;
+
+  if (TURN_EVENTS.has(ev)) {
+    // A denied prompt leaves its call open: no PostToolUse ever comes. Close this session's.
+    const state = readState(deps.statePath);
+    const open = Object.entries(state.pending).filter(([, e]) => e?.session_id && e.session_id === input.session_id);
+    if (!open.length || !input.transcript_path || !deps.readTranscript) return null;
+    let text = '';
+    try { text = await deps.readTranscript(input.transcript_path); } catch { return null; }
+    const results = callResults(text, open.map(([id]) => id));
+    let closed = false;
+    for (const [id, entry] of open) {
+      const r = results.get(id);
+      if (!r) continue;              // still running, or not written yet — the next event looks again
+      delete state.pending[id]; closed = true;
+      if (r.denied) await deps.markOutcome(entry.receipt_id, r.denied, { keepExisting: true });
+    }
+    if (closed) writeState(deps.statePath, state, now);
+    return null;
+  }
+
+  if (!reviewable(input)) return null;
 
   if (ev === 'PreToolUse') {
     const ship = classifyToolCall(input.tool_name, input.tool_input);
@@ -320,12 +385,12 @@ export async function runShipHook(input, deps) {
     const state = readState(deps.statePath);
     if (input.tool_use_id) {
       state.pending[input.tool_use_id] = {
-        receipt_id: receiptId, cmd_hash: callHash(input),
+        receipt_id: receiptId, cmd_hash: callHash(input), session_id: input.session_id || null,
         asked, prompt_shown: false, at: new Date(now).toISOString(),
       };
     }
     let context = preContext({
-      summary: ship.summary, signal, receiptId, asked,
+      summary: ship.summary, signal, receiptId, asked, recordsNo: Boolean(deps.readTranscript),
       hint: typeof response?.rationale_hint === 'string' ? response.rationale_hint : '',
     });
     if (raised) context += ` GitHub shows ${why}, so Phaedo treated this merge as high-stakes.`;
@@ -388,7 +453,7 @@ export async function runShipHook(input, deps) {
 export async function realDeps({ agentId = AGENT_ID, statePath } = {}) {
   const { loadConsultVd, buildConsultOpts } = await import('../consult-runtime.js');
   const { resolveConsultation, consultDrivers, withRevision } = await import('../consult.js');
-  const { buildReceipt, appendReceipt, receiptsCapFromEnv, markOutcome } = await import('../receipts.js');
+  const { buildReceipt, appendReceipt, receiptsCapFromEnv } = await import('../receipts.js');
   const { sourceOf } = await import('../fingerprint-source.js');
   const { defaultStateDir } = await import('../cache.js');
   const stateDir = defaultStateDir();
@@ -411,7 +476,42 @@ export async function realDeps({ agentId = AGENT_ID, statePath } = {}) {
       await appendReceipt(stateDir, r, { cap: receiptsCapFromEnv(process.env) });
       return r.receipt_id;
     },
-    async markOutcome(id, action) { await markOutcome(stateDir, id, action); },
+    async markOutcome(id, action, opts) { await markOutcomeKeeping(stateDir, id, action, opts); },
+    // Only Claude Code's transcript marks a person's denial; other agents' hooks have none. The
+    // directory edition never reads chat history, so it does not wire the turn events either.
+    ...(agentId === AGENT_ID && !isDirectoryEdition(MCP_DIR) ? { readTranscript: readTail } : {}),
+  };
+}
+
+// The hook's own outcomes never overwrite one already recorded (the agent's, or a yes).
+async function markOutcomeKeeping(stateDir, id, action, { keepExisting = false } = {}) {
+  const { readReceipts, markOutcome } = await import('../receipts.js');
+  if (keepExisting && (await readReceipts(stateDir)).some((r) => r.receipt_id === id && r.user_action)) return;
+  await markOutcome(stateDir, id, action);
+}
+
+// The last few MB of the transcript — a denial is near the end; the first, cut line is dropped.
+async function readTail(path, max = TRANSCRIPT_TAIL_BYTES) {
+  const { openSync, fstatSync, readSync, closeSync } = await import('fs');
+  const fd = openSync(path, 'r');
+  try {
+    const size = fstatSync(fd).size;
+    const len = Math.min(size, max);
+    const buf = Buffer.alloc(len);
+    readSync(fd, buf, 0, len, size - len);
+    const text = buf.toString('utf8');
+    return len < size ? text.slice(text.indexOf('\n') + 1) : text;
+  } finally { closeSync(fd); }
+}
+
+// The turn events' deps: no consult and no vault — only the state, the transcript, the receipts.
+export async function turnDeps({ statePath } = {}) {
+  const { defaultStateDir } = await import('../cache.js');
+  const stateDir = defaultStateDir();
+  return {
+    statePath: statePath || join(stateDir, 'ship-hook.json'),
+    readTranscript: readTail,
+    async markOutcome(id, action, opts) { await markOutcomeKeeping(stateDir, id, action, opts); },
   };
 }
 
@@ -419,6 +519,10 @@ async function main() {
   let raw = '';
   for await (const chunk of process.stdin) raw += chunk;
   const input = JSON.parse(raw);
+  if (TURN_EVENTS.has(input.hook_event_name)) {
+    await runShipHook(input, await turnDeps());
+    return;                          // never says anything on a prompt or a stop
+  }
   // Cheap exit before importing the vault stack: most Bash calls are not ship actions.
   if (!reviewable(input)) return;
   if (input.hook_event_name === 'PreToolUse' && !classifyToolCall(input.tool_name, input.tool_input)) return;

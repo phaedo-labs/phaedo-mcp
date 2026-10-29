@@ -8,7 +8,11 @@
       { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/session-end.mjs"] }] }
     ],
     "Stop": [
-      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/stop-capture.mjs"] }] }
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/stop-capture.mjs"] }] },
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/pre-ship.mjs"], "timeout": 15 }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/pre-ship.mjs"], "timeout": 15 }] }
     ],
     "PreToolUse": [
       { "matcher": "Bash|mcp__.*(send|reply|forward|post|publish|comment|share|invite|pay|purchase|transfer|checkout|buy|delete|purge|destroy|trash|merge).*", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/pre-ship.mjs"], "timeout": 15 }] }

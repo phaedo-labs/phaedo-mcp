@@ -49,6 +49,9 @@ const SHIP_HOOK_MARKER = 'hooks/pre-ship.mjs';           // identifies our ship-
 // it ran or failed (to record that person's yes). Its own budget is 12s; the timeout is
 // the backstop.
 export const SHIP_HOOK_EVENTS = ['PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure'];
+// The same hook on the turn events, to record a "no" from the transcript (full install only:
+// the directory edition does not read chat history). No matcher — these events have no tool.
+export const SHIP_TURN_EVENTS = ['UserPromptSubmit', 'Stop'];
 // Shell commands, plus connected-tool calls whose name says they send, pay, delete or merge
 // (ship-actions.js MCP_HOOK_MATCHER) — the personal reviewer covers both.
 export const SHIP_HOOK_MATCHER = `Bash|${MCP_HOOK_MATCHER}`;
@@ -245,7 +248,7 @@ export function applyCodeHook({ action, dryRun = false, home = homedir() } = {})
     const stop = removeHookEntry(both.settings, 'Stop', STOP_CAPTURE_HOOK_MARKER);
     let s = stop.settings;
     let shipChanged = false;
-    for (const ev of SHIP_HOOK_EVENTS) {
+    for (const ev of [...SHIP_HOOK_EVENTS, ...SHIP_TURN_EVENTS]) {
       const r = removeHookEntry(s, ev, SHIP_HOOK_MARKER);
       s = r.settings; shipChanged = shipChanged || r.changed;
     }
@@ -280,6 +283,10 @@ export function applyCodeHook({ action, dryRun = false, home = homedir() } = {})
   let shipChanged = false;
   for (const ev of SHIP_HOOK_EVENTS) {
     const r = mergeHookEntry(settings, ev, hookCommand({ hookPath: SHIP_HOOK_PATH }), SHIP_HOOK_MARKER, SHIP_HOOK_ENTRY);
+    settings = r.settings; shipChanged = shipChanged || r.changed;
+  }
+  for (const ev of SHIP_TURN_EVENTS) {
+    const r = mergeHookEntry(settings, ev, hookCommand({ hookPath: SHIP_HOOK_PATH }), SHIP_HOOK_MARKER, { timeout: SHIP_HOOK_ENTRY.timeout });
     settings = r.settings; shipChanged = shipChanged || r.changed;
   }
   const changed = start.changed || captureChanged || shipChanged;

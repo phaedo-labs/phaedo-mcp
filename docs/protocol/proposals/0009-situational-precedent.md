@@ -3,7 +3,8 @@
 Status: **Draft — not normative.** Written 2026-09-13; matured 2026-10-27 (precedent track Phase 2).
 The derived view is implemented as a dev-only readout (`mcp/precedent.js`, `npm run precedent`); it
 is **not** wired into consult and nothing here changes the wire until a later version says so.
-**Owed: Randy's review** — that review is the Phase 2 exit.
+**Reviewed by Randy 2026-10-27 — all four open recommendations accepted (see "Decided"); Phase 2
+exit passed.** Still a draft: it stays one until rejections are captured (Decided, 3).
 Relates to: 0003 (standing authorizations), 0004 (consultation receipts), 0007 (authored decision
 rules). Design and roadmap: `docs/roadmap/precedent-and-sync-design-2026-09-13.md`. Spec: §13 OQ24
 (this proposal), OQ25 (synchronization state).
@@ -101,21 +102,31 @@ Run against the primary store (22 usable marked decisions in 180 days):
 
 1. ~~Phase 1 — in-flow outcome collection.~~ **Exit passed 2026-10-27**: `npm run agreement` returns a
    non-null rate (engineering, 12/12 scored); by resolver revision 7/7 and 5/5.
-2. **Phase 2 — the key and the bands (now).** Banding function pure and tested (`mcp/precedent.js`,
-   51 checks); this proposal matured to match. *Exit:* Randy's review of this document.
-3. Phase 3 — only after review: a TC conformance category for banding, then a spec version that
-   lets the field appear on the wire, confidence-only (Open, last bullet).
+2. ~~Phase 2 — the key and the bands.~~ **Exit passed 2026-10-27**: banding function pure and tested
+   (`mcp/precedent.js`, 51 checks); this proposal matured to match; Randy reviewed it and accepted
+   all four recommendations below.
+3. **Phase 3 — next.** "No" capture built for Claude Code (0.3.14; Decided, 3); let it gather; then a TC conformance category
+   for banding on the coarse key; then a spec version that lets the field appear on the wire,
+   confidence-only (Decided, 4).
+
+## Decided (Randy's review, 2026-10-27)
+
+1. **Key coarseness → coarse key first.** v1 matches on `domain × kind × reversible × magnitude`.
+   `size`, `touched` and `amount_band` join the key once most receipts in a shape carry them.
+2. **N and the window → N=5 within 180 days.** The implemented defaults stand.
+3. **Capturing "no" → gate.** Precedent does not leave draft until rejections reach the store
+   without the agent having to remember them (e.g. read from the next prompt after a denied
+   permission), or until the agreement figure ships with the bias disclosed beside it.
+   *Built for Claude Code 2026-10-27 (phaedo-mcp 0.3.14):* the ship hook reads the transcript's
+   `toolDenialKind: "user-rejected"` mark at the next prompt or turn end. The gate clears once
+   enough post-0.3.14 receipts exist that a shape's rejection rate is measured rather than
+   missing; receipts from before it stay biased toward yes. Cursor, Copilot, Codex and Gemini
+   still depend on the agent recording a no.
+4. **Reach in v1 → confidence only.** Precedent may adjust `confidence`; it may not move a response
+   from `escalate` to a decisive signal, and never to `autoproceed` (Rail 4).
 
 ## Open
 
-- **Key coarseness.** Full key vs `domain × kind × reversible × magnitude`. Recommendation: ship the
-  coarse key first; add `size`/`touched`/`amount_band` once most receipts in a shape carry them.
-- **N and the window.** Implemented defaults N=5, 180 days. Recommendation: keep N=5; the store
-  reaches it for the subject's everyday shapes inside a month.
-- **Capturing "no".** Rejections need a path that does not depend on the agent remembering to record
-  them (e.g. the next prompt after a denied permission). Precedent should not leave draft until this
-  is closed or the bias is disclosed with the figure.
 - **Burst threshold.** Implemented: 3 marks inside 60 s are bookkeeping and excluded per receipt
   (the §10.7 gate is per bucket, as a fraction). Whether the two should converge.
 - Disclosure: all paired agents, or scoped.
-- Whether precedent may move `escalate` → decisive in v1 (recommendation: confidence only).

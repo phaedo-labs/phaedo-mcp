@@ -13,7 +13,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnSync } from 'child_process';
 import {
-  runShipHook, readState, writeState, promptReason, commandHash, callHash, personalWhy,
+  runShipHook, readState, writeState, promptReason, commandHash, callHash, personalWhy, callResults,
   ASKING_SIGNALS, STALE_PROFILE_DAYS, AGENT_ID,
   ciStateFromRollup, lookupCiState, CI_RAISES,
   lookupPrFacts, diffStakes, isSensitivePath, parseSensitiveList, stakesValue, raiseWords,
@@ -41,7 +41,7 @@ try {
         mcpDir: '/x/mcp',
         async consult(req) { log.consults.push(req); return { response: { signal, confidence: 0.44, rationale_hint: 'hint text' }, drivers: [], source }; },
         async writeReceipt(r) { log.receipts.push(r); return receiptId; },
-        async markOutcome(id, a) { log.marks.push([id, a]); },
+        async markOutcome(id, a, o) { log.marks.push(o ? [id, a, o] : [id, a]); },
       },
     };
   };
@@ -413,6 +413,89 @@ try {
     ok(JSON.stringify(readState(p)) === '{"pending":{}}', 'foreign shape → fresh');
   }
 
+  // ── A "no": read from the transcript at the next prompt or stop ─────────────────────
+  {
+    // Lines shaped like Claude Code's own transcript entries (2026-10 transcripts).
+    const REJECT = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.";
+    const line = (id, content, extra = {}) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content }] }, ...extra });
+    const denied = (id, extra = {}) => line(id, REJECT, { toolUseResult: 'User rejected tool use', toolDenialKind: 'user-rejected', ...extra });
+    const said = (id) => line(id, [{ type: 'text', text: `${REJECT.split(' STOP')[0]} To tell you how to proceed, the user said:\nmerge after CI` }], { toolDenialKind: 'user-rejected' });
+    const ran = (id) => JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'merged' }] } });
+    const classifier = (id) => line(id, 'Error: Permission for this action was denied by the Claude Code auto mode classifier.', { toolDenialKind: 'automode-blocked' });
+
+    const m = callResults([denied('a'), said('b'), denied('c', { interruptedByShutdown: true }), classifier('d'), ran('e'), '{oops', '', denied('zzz')].join('\n'), ['a', 'b', 'c', 'd', 'e', 'f']);
+    ok(m.get('a').denied === 'rejected', 'transcript: a person\'s no → rejected');
+    ok(m.get('b').denied === 'modified', 'transcript: a no with "do this instead" → modified');
+    ok(m.get('c').denied === null, 'transcript: quitting the app mid-prompt is not a decision');
+    ok(m.get('d').denied === null, 'transcript: auto mode\'s classifier saying no is not the person');
+    ok(m.get('e').denied === null, 'transcript: a call that ran is not a no');
+    ok(!m.has('f') && !m.has('zzz'), 'transcript: no result yet → absent; other calls ignored');
+    ok(callResults('', ['a']).size === 0 && callResults(denied('a'), []).size === 0 && callResults(null, ['a']).size === 0, 'transcript: empty input → empty');
+
+    const flow = (signal = 'escalate') => {
+      const t = { text: '' };
+      const made = mk(signal);
+      made.deps.readTranscript = async () => t.text;
+      return { ...made, t };
+    };
+    const turn = (name, extra = {}) => ({ hook_event_name: name, session_id: 's1', transcript_path: '/t.jsonl', ...extra });
+
+    {
+      const { deps, log, t } = flow();
+      const h = (await runShipHook(pre(CMD, { session_id: 's1' }), deps)).hookSpecificOutput;
+      ok(/A yes or a no on the prompt is recorded automatically/.test(h.additionalContext) && !/If they decline/.test(h.additionalContext), 'Claude Code: the agent is told both answers record themselves');
+      await runShipHook(perm(), deps);
+      ok(await runShipHook(turn('UserPromptSubmit'), deps) === null && log.marks.length === 0, 'no result yet → nothing recorded');
+      ok(readState(deps.statePath).pending['tu-1'], '…and the call stays open for the next event');
+      t.text = [ran('other'), denied('tu-1')].join('\n');
+      ok(await runShipHook(turn('UserPromptSubmit', { session_id: 's2' }), deps) === null && log.marks.length === 0, 'another session\'s prompt never closes this one');
+      ok(await runShipHook(turn('UserPromptSubmit'), deps) === null, 'a prompt never gets output from the hook');
+      ok(log.marks.length === 1 && log.marks[0][0] === 'rcpt-1' && log.marks[0][1] === 'rejected', 'denied prompt → rejected on its receipt');
+      ok(log.marks[0][2]?.keepExisting === true, 'never over what the agent already recorded');
+      ok(!readState(deps.statePath).pending['tu-1'], 'the call is closed');
+      await runShipHook(turn('UserPromptSubmit'), deps);
+      ok(log.marks.length === 1, 'recorded once');
+    }
+    {
+      const { deps, log, t } = flow();
+      await runShipHook(pre(CMD, { session_id: 's1' }), deps);
+      t.text = said('tu-1');
+      await runShipHook(turn('Stop'), deps);
+      ok(log.marks.length === 1 && log.marks[0][1] === 'modified', 'Stop: "no, do this instead" (the turn goes on) → modified');
+    }
+    {
+      const { deps, log, t } = flow();
+      await runShipHook(pre(CMD, { session_id: 's1' }), deps);
+      t.text = classifier('tu-1');
+      await runShipHook(turn('Stop'), deps);
+      ok(log.marks.length === 0 && !readState(deps.statePath).pending['tu-1'], 'classifier no → closed, nothing recorded');
+    }
+    {
+      const { deps, log, t } = flow('proceed');
+      await runShipHook(pre(CMD, { session_id: 's1' }), deps);
+      await runShipHook(perm(), deps);
+      await runShipHook(post(), deps);
+      t.text = ran('tu-1');
+      await runShipHook(turn('UserPromptSubmit'), deps);
+      ok(log.marks.length === 1 && log.marks[0][1] === 'approved', 'a yes is still the PostToolUse path; the turn event adds nothing');
+    }
+    {
+      const { deps, log } = flow();
+      await runShipHook(pre(), deps);          // no session id (an older entry)
+      deps.readTranscript = async () => { throw new Error('should not read'); };
+      ok(await runShipHook(turn('UserPromptSubmit'), deps) === null && log.marks.length === 0, 'an entry with no session id is never matched');
+      deps.readTranscript = async () => { throw new Error('unreadable'); };
+      await runShipHook(pre(CMD, { session_id: 's1', tool_use_id: 'tu-2' }), deps);
+      ok(await runShipHook(turn('UserPromptSubmit'), deps) === null && readState(deps.statePath).pending['tu-2'], 'unreadable transcript → nothing, call kept');
+      ok(await runShipHook(turn('UserPromptSubmit', { transcript_path: undefined }), deps) === null, 'no transcript path → nothing');
+    }
+    {
+      const { deps, log } = mk('escalate');     // other agents: no transcript reader
+      await runShipHook(pre(CMD, { session_id: 's1' }), deps);
+      ok(await runShipHook(turn('UserPromptSubmit'), deps) === null && log.marks.length === 0, 'without a transcript reader the turn events do nothing');
+    }
+  }
+
   // ── The real script, as Claude Code runs it ─────────────────────────────────────────
   {
     const stateDir = mkdtempSync(join(dir, 'state-'));
@@ -455,6 +538,29 @@ try {
     ok(p2.status === 0 && p2.stdout === '', 'script: PostToolUse exit 0, no output after a recorded yes');
     ok((await readReceipts(stateDir))[0].user_action === 'approved', 'script: prompted + ran → approved on the receipt');
     ok(!readFileSync(join(stateDir, 'ship-hook.json'), 'utf8').includes('merge'), 'script: state file never holds the command');
+
+    // Prompt shown → declined: Claude Code fires no hook; the next prompt reads the transcript.
+    const r3 = run(pre('gh pr merge 373 --squash', { tool_use_id: 'tu-no', session_id: 'sess-1' }));
+    const rid3 = /receipt_id: ([0-9a-f-]{36})/.exec(JSON.parse(r3.stdout).hookSpecificOutput.additionalContext)?.[1];
+    run(perm('gh pr merge 373 --squash'));
+    const tPath = join(dir, 'transcript.jsonl');
+    writeFileSync(tPath, [
+      JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu-no', name: 'Bash', input: { command: 'gh pr merge 373 --squash' } }] } }),
+      JSON.stringify({ type: 'user', toolDenialKind: 'user-rejected', toolUseResult: 'User rejected tool use', message: { content: [{ type: 'tool_result', tool_use_id: 'tu-no', is_error: true, content: "The user doesn't want to proceed with this tool use." }] } }),
+    ].join('\n') + '\n');
+    const ups = run({ hook_event_name: 'UserPromptSubmit', session_id: 'sess-1', transcript_path: tPath, prompt: 'no, wait for CI' });
+    ok(ups.status === 0 && ups.stdout === '', 'script: UserPromptSubmit exit 0, no output');
+    ok((await readReceipts(stateDir)).find((x) => x.receipt_id === rid3)?.user_action === 'rejected', 'script: declined prompt → rejected on the receipt');
+    // An outcome the agent already recorded is kept.
+    const r4 = run(pre('gh pr merge 374 --squash', { tool_use_id: 'tu-kept', session_id: 'sess-1' }));
+    const rid4 = /receipt_id: ([0-9a-f-]{36})/.exec(JSON.parse(r4.stdout).hookSpecificOutput.additionalContext)?.[1];
+    const { markOutcome } = await import('./receipts.js');
+    await markOutcome(stateDir, rid4, 'modified');
+    writeFileSync(tPath, JSON.stringify({ type: 'user', toolDenialKind: 'user-rejected', message: { content: [{ type: 'tool_result', tool_use_id: 'tu-kept', content: 'x' }] } }) + '\n');
+    run({ hook_event_name: 'Stop', session_id: 'sess-1', transcript_path: tPath });
+    ok((await readReceipts(stateDir)).find((x) => x.receipt_id === rid4)?.user_action === 'modified', 'script: the agent\'s recorded outcome is kept');
+    const idle = run({ hook_event_name: 'UserPromptSubmit', session_id: 'sess-other', transcript_path: join(dir, 'missing.jsonl') });
+    ok(idle.status === 0 && idle.stdout === '', 'script: a prompt with nothing open → exit 0, no output');
 
     const garbage = spawnSync(process.execPath, [script], { input: 'not json', env, encoding: 'utf8' });
     ok(garbage.status === 0 && garbage.stdout === '', 'script: garbage stdin → exit 0, no output');

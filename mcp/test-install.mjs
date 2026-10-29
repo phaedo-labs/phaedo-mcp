@@ -229,7 +229,12 @@ try {
   ok(written.hooks.SessionStart[0].hooks[0].command.includes('session-start.mjs'), 'hook command written');
   // Capture: SessionEnd for sessions that end, Stop for the desktop app's open-for-days ones.
   ok(written.hooks.SessionEnd?.[0]?.hooks?.[0]?.command?.includes('session-end.mjs'), 'SessionEnd capture hook written');
-  ok(written.hooks.Stop?.length === 1 && written.hooks.Stop[0].hooks[0].command.includes('stop-capture.mjs'), 'Stop capture hook written (open sessions)');
+  ok(written.hooks.Stop?.length === 2 && written.hooks.Stop[0].hooks[0].command.includes('stop-capture.mjs'), 'Stop capture hook written (open sessions)');
+  // The ship hook also on the turn events, to record a "no" from the transcript: no matcher.
+  for (const ev of ['UserPromptSubmit', 'Stop']) {
+    const e = (written.hooks[ev] || []).find((x) => x.hooks?.[0]?.command?.includes('pre-ship.mjs'));
+    ok(!!e && !('matcher' in e) && e.hooks[0].timeout === 15, `ship hook on ${ev} (records a declined prompt): no matcher, with a timeout`);
+  }
   // Ship hook: the same script on all three Bash events, matcher-scoped, with a timeout.
   for (const ev of ['PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure']) {
     const e = (written.hooks[ev] || []).find((x) => x.hooks?.[0]?.command?.includes('pre-ship.mjs'));
@@ -240,15 +245,16 @@ try {
   {
     const p = join(hookHome, '.claude', 'settings.json');
     const old = JSON.parse(readFileSync(p, 'utf8'));
-    for (const ev of ['PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure', 'Stop']) delete old.hooks[ev];
+    for (const ev of ['PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'UserPromptSubmit']) delete old.hooks[ev];
     old.hooks.PreToolUse = [{ matcher: 'Edit', hooks: [{ type: 'command', command: 'theirs' }] }];
     old.hooks.Stop = [{ hooks: [{ type: 'command', command: 'their-stop' }] }];
     writeFileSync(p, JSON.stringify(old));
     ok(applyCodeHook({ action: 'install', home: hookHome }).status === 'configured', 'old install upgrades to the ship + Stop capture hooks');
     const up = JSON.parse(readFileSync(p, 'utf8'));
     ok(up.hooks.PreToolUse.length === 2 && up.hooks.PreToolUse[0].hooks[0].command === 'theirs', 'sibling PreToolUse hook kept');
-    ok(up.hooks.Stop.length === 2 && up.hooks.Stop[0].hooks[0].command === 'their-stop' &&
-       up.hooks.Stop[1].hooks[0].command.includes('stop-capture.mjs'), "Stop capture added beside the user's own Stop hook");
+    ok(up.hooks.Stop.length === 3 && up.hooks.Stop[0].hooks[0].command === 'their-stop' &&
+       up.hooks.Stop[1].hooks[0].command.includes('stop-capture.mjs') && up.hooks.Stop[2].hooks[0].command.includes('pre-ship.mjs'),
+       "Stop capture and the ship hook added beside the user's own Stop hook");
     ok(applyCodeHook({ action: 'install', home: hookHome }).status === 'unchanged', 're-install does not duplicate the Stop entry');
   }
   ok(applyCodeHook({ action: 'uninstall', home: hookHome }).status === 'removed', 'uninstall removes it');

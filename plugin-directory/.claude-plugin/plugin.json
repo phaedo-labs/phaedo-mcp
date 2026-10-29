@@ -1,7 +1,7 @@
 {
   "name": "phaedo",
   "displayName": "Phaedo",
-  "version": "0.3.13",
+  "version": "0.3.14",
   "description": "Claude checks with you before acting: asks Phaedo before merges and deploys, sends decisions to your phone to approve, and signs spending approvals with Face ID. Loads your Phaedo profile when you ask.",
   "author": {
     "name": "Phaedo Labs",

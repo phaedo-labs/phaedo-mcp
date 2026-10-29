@@ -1,5 +1,26 @@
 # Changelog — phaedo-mcp
 
+## 0.3.14 — unreleased
+
+### Your "no" counts too
+
+Phaedo learned from a yes on a confirmation prompt but almost never saw a no: Claude Code fires
+no hook when you decline, so a rejection reached the record only if the agent remembered to
+write it (13 yes / 0 no on merges). The ship hook now also runs on `UserPromptSubmit` and
+`Stop`, and for this session's still-open consults reads the end of the transcript (4 MB at
+most), where Claude Code marks a person's denial `toolDenialKind: "user-rejected"`.
+
+- Records `rejected`, or `modified` when you said what to do instead ("…the user said:").
+- Only a person's no: auto mode's classifier, permission rules, and quitting the app mid-prompt
+  record nothing. An outcome already on the receipt (the agent's, or a yes) is kept.
+- Cheap on every prompt: a state-file read, and the transcript only when a consult is open.
+  Nothing is printed on a prompt or a stop. Pending calls now carry their session id.
+- Claude Code only (other agents' transcripts don't mark denials); not in the directory
+  edition, which never reads chat history. Re-run `npm run setup:code-hook` to wire it.
+- The learned list no longer shows "assume state proceed": the phrasebook maps that value of
+  `ambiguity_posture` to "be decisive" (shared with the phone).
+- Tests: ship hook 233 (+the transcript cases), install 112, plugin 95.
+
 ## 0.3.13 — unreleased
 
 ### Learn from your ChatGPT or Claude history

@@ -297,6 +297,8 @@
         ask: 'When things are unclear, ask me before deciding.',
         delay: 'When things are unclear, wait rather than commit too early.',
       },
+      // The request-level words (ambiguity_response) for "guess and carry on" mean be decisive here.
+      aliases: { assume_state_proceed: 'default', assume_silent: 'default', assume_state: 'default' },
     },
     evidence_threshold: {
       topic: 'how sure you need to be before committing',

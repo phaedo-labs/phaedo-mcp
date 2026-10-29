@@ -435,9 +435,13 @@ ask me before posting in #eng". When the answer is no, it stays quiet.
 - **Outcomes are yours, never inferred.** The hook records `approved` only when it has
   evidence you were asked: Claude Code fired PermissionRequest for that call, and the
   call then ran. In auto mode that counts only when Phaedo itself asked (the prompt it forced
-  is yours; any other is the classifier's); in dontAsk, never. Decline and the agent records `rejected` (Claude Code fires no hook for a
-  decline). No prompt shown, nothing recorded; the agent is told so, and records your
-  reaction only if you give one.
+  is yours; any other is the classifier's); in dontAsk, never. **Decline and that is recorded too:**
+  Claude Code fires no hook for a decline, but it marks it in the session's own transcript, so
+  at your next message (or when the turn ends) the hook reads the end of the transcript for its
+  open calls and records `rejected` — or `modified` if you said what to do instead. Only a
+  person's no counts (auto mode's classifier saying no, or quitting the app, records nothing),
+  and an outcome the agent already recorded is kept. No prompt shown, nothing recorded; the
+  agent is told so, and records your reaction only if you give one.
 - **What a merge changes.** Before `gh pr merge` the hook reads the PR from GitHub (read-only):
   failing or unfinished checks, a large diff (> 1,000 code lines or > 20 files), or a sensitive
   path (CI/deploy config, auth/crypto/secrets by name, or your repo's `.phaedo-sensitive` list,

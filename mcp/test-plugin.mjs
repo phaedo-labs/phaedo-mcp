@@ -19,7 +19,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { buildPlugin, marketplaceManifest, mcpbManifest } from './build-plugin.mjs';
 import { configDir, LAYOUT_MARKER } from './lib/config-dir.js';
-import { SHIP_HOOK_EVENTS, SHIP_HOOK_MATCHER } from './install.mjs';
+import { SHIP_HOOK_EVENTS, SHIP_TURN_EVENTS, SHIP_HOOK_MATCHER } from './install.mjs';
 
 const MCP = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(MCP, 'package.json'), 'utf8'));
@@ -64,8 +64,12 @@ try {
 
     const hooks = JSON.parse(readFileSync(join(out, 'hooks', 'hooks.json'), 'utf8')).hooks;
     const events = Object.keys(hooks).sort();
-    ok(JSON.stringify(events) === JSON.stringify(['SessionEnd', 'SessionStart', 'Stop', ...SHIP_HOOK_EVENTS].sort()),
+    ok(JSON.stringify(events) === JSON.stringify([...new Set(['SessionEnd', 'SessionStart', 'Stop', ...SHIP_HOOK_EVENTS, ...SHIP_TURN_EVENTS])].sort()),
       'the plugin wires the same hook events the installer does');
+    for (const ev of SHIP_TURN_EVENTS) {
+      const g = hooks[ev].find((x) => x.hooks[0].args[0].endsWith('/pre-ship.mjs'));
+      ok(g && !g.matcher, `${ev}: the ship hook looks for a declined prompt (no matcher)`);
+    }
     for (const ev of SHIP_HOOK_EVENTS) ok(hooks[ev][0].matcher === SHIP_HOOK_MATCHER, `${ev}: the reviewer sees the same calls as the installer wires (shell + consequential tools)`);
     for (const h of Object.values(hooks).flat().flatMap((g) => g.hooks)) {
       ok(h.command === 'node' && h.args[0].startsWith('${CLAUDE_PLUGIN_ROOT}/'), `exec-form hook, path from the plugin root: ${h.args[0]}`);
