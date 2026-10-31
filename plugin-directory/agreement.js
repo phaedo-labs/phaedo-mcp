@@ -30,7 +30,7 @@
 export const DECISIVE = ['proceed', 'proceed_with_note', 'decline'];
 export const DEFAULT_WINDOW_DAYS = 30;
 
-function agrees(signal, userAction) {
+export function agrees(signal, userAction) {
   if (userAction === 'approved') return signal === 'proceed' || signal === 'proceed_with_note';
   if (userAction === 'rejected') return signal === 'decline';
   return false; // 'modified' — the action was not accepted as-judged

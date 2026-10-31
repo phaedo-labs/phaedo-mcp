@@ -11,12 +11,18 @@ import { loadFingerprint, sourceOf, summarizeStarter } from './fingerprint-sourc
 import { readReceipts } from './receipts.js';
 import { defaultStateDir } from './cache.js';
 import { weeklyHandled, formatWeekly } from './weekly.js';
+import { asksByWeek, trendLine } from './asks.js';
 import { learnedItems, readLearnedState, reviewLine } from './learned.js';
 
 const BASE_DIR = dirname(fileURLToPath(import.meta.url));
 
-// Every outcome ends with what Phaedo did for the subject this week — the reason to have it.
-const week = async () => `  ${formatWeekly(weeklyHandled(await readReceipts(defaultStateDir()).catch(() => [])))}\n`;
+// Every outcome ends with what Phaedo did for the subject this week — the reason to have it —
+// and, once there is enough to compare, whether it is asking them less than before.
+const week = async () => {
+  const receipts = await readReceipts(defaultStateDir()).catch(() => []);
+  const trend = trendLine(asksByWeek(receipts));
+  return `  ${formatWeekly(weeklyHandled(receipts))}\n${trend ? `  ${trend}\n` : ''}`;
+};
 // …and, when there is any, what Phaedo learned that the subject hasn't looked at yet.
 const review = (vd) => { const line = reviewLine(learnedItems(vd), readLearnedState(defaultStateDir())); return line ? `  ${line}\n` : ''; };
 

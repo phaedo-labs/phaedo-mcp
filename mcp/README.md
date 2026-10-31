@@ -528,7 +528,14 @@ Quick readout on your own machine:
 cd mcp && npm run receipts                          # decrypts locally, lists the last 50 (with a short id per line)
 node receipts.js mark <id|prefix|latest> approved   # record what YOU did → approved | rejected | modified | unknown
 npm run agreement                                   # per-domain agreement rate (oracle vs your actual decisions)
+npm run asks                                        # are you being asked less? last 4 weeks vs the 4 before
+npm run asks -- --weeks 12 --table                  # …week by week
 ```
+
+`npm run asks` is the number Phaedo is judged by: how often it brought an action to you, whether
+that is falling, how often you reversed what it decided alone, and which asks were about things
+that could be undone and you approved as-is (the asks it should learn to drop). `/phaedo:status`
+adds the headline once each half of the window holds 5 checks.
 
 `user_action` is **subject-authored**: set it from what *you* decided, not from whether an
 agent proceeded. Until receipts carry one, `npm run agreement` shows `—`

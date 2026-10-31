@@ -1,5 +1,25 @@
 # Changelog — phaedo-mcp
 
+## 0.3.15 — unreleased
+
+### Are you being asked less?
+
+Phaedo exists to cut how often agents interrupt you while still bringing you the irreversible,
+high-stakes calls. Nothing measured that over time; `weekly.js` counted one week. `asks.js` +
+`npm run asks` reads the local receipts week by week (default 8) and compares the ask rate of the
+newest half with the half before — silent until each half holds 5 checks, so a handful never
+reads as a trend. Two honesty checks ride with it:
+
+- **Reversed** — a call Phaedo made without asking that you then overturned (agreement.js
+  scoring, now exporting `agrees`). The cost of asking less.
+- **Could have gone ahead** — an ask about something reversible that you approved as-is. Asks
+  about irreversible actions never count here; those stay yours.
+- It also says how many quiet calls you **still had to answer** — from the hooks, only when your
+  app showed its own approval prompt. That is the next interruption to remove.
+- `/phaedo:status` (both editions) adds the headline once there is a trend. `--table` shows each
+  week. On this Mac today: 43 checks in 4 weeks, 1 ask (2%), 13 still answered, 0 reversed.
+- Tests: asks 25.
+
 ## 0.3.14 — unreleased
 
 ### Your "no" counts too
