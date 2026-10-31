@@ -9,6 +9,7 @@
 
 import assert from 'node:assert';
 import { buildAutonomyPromotions, batchFraction, spendCeiling, MIN_APPROVALS, MIN_DISTINCT_DAYS } from './autonomy-promotion.js';
+import { buildReceipt } from './receipts.js';
 
 let pass = 0;
 const ok = (c, m) => { assert.ok(c, m); pass++; };
@@ -87,9 +88,32 @@ refuses([...qualifying(), rcpt({ agoDays: 1, user_action: 'modified', signal: 'p
 refuses(qualifying().map((r, i) => rcpt({ agoDays: i + 1, reversible: false })), 'irreversible actions are never proposed');
 refuses(qualifying().map((r, i) => rcpt({ agoDays: i + 1, magnitude: 'high' })), 'high-magnitude actions are never proposed');
 refuses(qualifying().map((r, i) => rcpt({ agoDays: i + 1, amount: -5 })), 'a malformed (negative) amount is not evidence of anything');
+refuses(qualifying().map((r, i) => rcpt({ agoDays: i + 1, amount: 'ten' })), 'a non-numeric amount is not evidence of anything');
 refuses(qualifying().map((r, i) => rcpt({ agoDays: i + 1, domain: '' })), 'an undomained class is never proposed');
 refuses(qualifying().map((r, i) => rcpt({ agoDays: i + 1, signal: 'escalate' })), 'approvals of a non-decisive signal do not count as agreement');
 refuses(qualifying().map((r, i) => rcpt({ agoDays: i + 1, agoDays2: 0, ...{} })).map((r) => ({ ...r, created_at: iso(NOW - 400 * DAY) })), 'evidence outside the window does not count');
+
+// The STORED shape. The fixture above omits an unstated amount, but the receipt store writes it
+// as `null` (receipts.js buildReceipt). Read as malformed, that refused every real receipt — no
+// promotion fired on real data for three months while this file stayed green. Build the
+// evidence through the real writer so the two can't drift apart again.
+{
+  const stored = Array.from({ length: 6 }, (_, i) => {
+    const created = NOW - (i + 1) * DAY;
+    const r = buildReceipt({
+      via: 'phaedo_consult',
+      agentId: 'agent-A',
+      request: { action_descriptor: { domain: 'engineering', reversible: true, magnitude: 'medium', summary: 'Merge PR.' } },
+      response: { signal: 'proceed', confidence: 0.6, deference_level: 'medium' },
+      now: created,
+    });
+    return { ...r, user_action: 'approved', user_action_at: iso(created + 60 * 60 * 1000) };
+  });
+  ok(stored.every((r) => r.request.action_descriptor.amount === null), 'the store writes an unstated amount as null');
+  const out = buildAutonomyPromotions(stored, {}, { now: NOW });
+  ok(out.length === 1 && out[0].match.domains[0] === 'engineering', 'receipts as stored (amount: null) are evidence — an unpriced class is proposed');
+  ok(!('amount_lte' in out[0].match), 'an unpriced class gets no spend ceiling');
+}
 
 // Batch-marking: the fatigue signal. Same six approvals, all stamped together.
 {

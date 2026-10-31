@@ -1,5 +1,25 @@
 # Changelog — phaedo-mcp
 
+## 0.3.16 — unreleased
+
+### Phaedo can offer to stop asking again
+
+§10.7 autonomy promotion — the one channel that can propose *less* friction — had never fired on
+real data. The receipt store writes an unstated amount as `null`; the promotion gate read anything
+but "absent" as a malformed amount and refused the receipt. So every stored approval was thrown
+out, from the day the check landed (2026-07-22, `amount_lt`) until now. The tests stayed green
+because their fixture left the field out instead of writing it the way the store does.
+
+- `null` now means unpriced, same as absent. Non-numeric and negative amounts are still refused.
+- A new test builds its evidence through the real receipt writer, so the fixture and the store
+  can't drift apart again.
+- On this Mac it now proposes one rule: let agents go ahead with routine, reversible engineering
+  actions without asking (13 approvals over 4 days, none declined, 14/14 agreement; limited to
+  the client that earned it; expires in 30 days). It reaches the phone on the next consult while
+  paired, as a card you accept or dismiss. Nothing is granted until you accept it.
+- What accepting it does **not** do yet: Claude Code's own permission prompt still appears. The
+  ship hook never returns `allow` — that is a separate decision.
+
 ## 0.3.15 — unreleased
 
 ### Are you being asked less?

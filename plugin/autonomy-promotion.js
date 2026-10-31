@@ -73,7 +73,10 @@ function isPromotableApproval(r) {
   if (r?.response?.signal !== 'proceed' && r?.response?.signal !== 'proceed_with_note') return false;
   if (ad.reversible !== true) return false;                       // irreversible is never auto-proceeded
   if (ad.magnitude === 'high') return false;                      // nor is a major action
-  if (ad.amount !== undefined && !(typeof ad.amount === 'number' && Number.isFinite(ad.amount) && ad.amount >= 0))
+  // `null` is how the receipt store writes an unstated amount (receipts.js), so it means
+  // "unpriced", same as absent. Reading it as malformed refused every stored receipt — no
+  // promotion fired on real data from 2026-07-22 to 2026-10-31.
+  if (ad.amount != null && !(typeof ad.amount === 'number' && Number.isFinite(ad.amount) && ad.amount >= 0))
     return false;                                                 // a malformed amount is not evidence of anything
   if (!ad.domain) return false;                                   // an unscoped autoproceed rule is a blank cheque
   return true;
