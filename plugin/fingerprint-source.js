@@ -256,6 +256,20 @@ export function sourceOf(vd) {
   return s || { live: true, cachedAt: null, ageMs: 0 };
 }
 
+/**
+ * Copy `from`'s provenance onto `to` (a derived copy of it) and return `to`. Any overlay that
+ * spreads the fingerprint MUST pass its result through this: an absent marker reads as LIVE,
+ * so a lost one makes a stale cached read look fresh to the stale-authority guard.
+ */
+export function carrySource(from, to) {
+  const s = from && from[SOURCE];
+  if (!s || !to || typeof to !== 'object' || to === from) return to;
+  try {
+    Object.defineProperty(to, SOURCE, { value: s, enumerable: false, configurable: true, writable: true });
+  } catch { /* frozen object — provenance is best-effort, never fatal */ }
+  return to;
+}
+
 // What the subject removed in `npm run learned` is taken out on EVERY read, so injection,
 // consult and the rules files all stop using it — even when the sessions keep showing it.
 // `unfiltered` is for that review screen alone, which has to list what was removed.

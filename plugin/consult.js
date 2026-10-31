@@ -13,7 +13,7 @@ import { buildInjectionResponse } from './projection.js';
 import { loadPolicies, applyPolicies } from './consult-policy.js';
 import { PhaedoError } from './errors.js';
 import {
-  resolveConsultationCore, buildConsultationResponse, checkAuthorization, normalizeRequest,
+  resolveConsultationCore, buildConsultationResponse, checkAuthorization, standingRuleRelaxes, normalizeRequest,
   shape, SIGNALS, CONSULTATION_TYPES, validateVaultShape, consultDrivers,
   deriveDelegationSignals, withDelegationSignals, buildDelegationPromotions, DELEGATION_PROMOTION_FLOOR,
   authoredDelegationSignals,
@@ -22,7 +22,7 @@ import {
 
 // Re-export the core surface so existing importers (server.js, tests,
 // spec/test-schemas.mjs) keep their `from './consult.js'` paths.
-export { CONSULTATION_TYPES, buildConsultationResponse, resolveConsultationCore, checkAuthorization, validateVaultShape, consultDrivers, deriveDelegationSignals, withDelegationSignals, buildDelegationPromotions, DELEGATION_PROMOTION_FLOOR, authoredDelegationSignals };
+export { CONSULTATION_TYPES, buildConsultationResponse, resolveConsultationCore, checkAuthorization, standingRuleRelaxes, validateVaultShape, consultDrivers, deriveDelegationSignals, withDelegationSignals, buildDelegationPromotions, DELEGATION_PROMOTION_FLOOR, authoredDelegationSignals };
 
 // ── Model resolver (richest fingerprint, LOCAL compute — opt-in) ──────────────
 // When a local model is configured (PHAEDO_CONSULT_MODEL + an Ollama/OpenAI-

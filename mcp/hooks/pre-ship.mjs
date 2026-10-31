@@ -9,13 +9,24 @@
 // Phaedo before those run (ship-actions.js names them) and writes a §10.6 receipt, so the
 // receipts accumulate in normal use instead of waiting for an agent to remember a tool.
 //
-// WHAT IT MAY DO — ONE RULE. The hook only ever ADDS friction; it never removes it. It
-// never returns `allow`, so it cannot pre-approve anything Claude Code would otherwise
-// have asked about. On a permissive answer it returns no decision at all (Claude Code's
-// own permission flow applies unchanged); on a cautious one it returns `ask`, which puts
-// the action in front of the subject. That is why it reads the at-rest profile cache and
-// skips the server's stale-authority guard: the guard exists to stop a stale read from
-// EXPANDING autonomy, and nothing here can.
+// WHAT IT MAY DO. On a cautious answer it returns `ask`, which puts the action in front of
+// the subject. On a permissive answer it returns no decision (Claude Code's own permission
+// flow applies unchanged) — with ONE exception, since 0.3.17: it returns `allow` when the
+// subject's own standing rule decided the action (a §10.5 `autoproceed` authorization they
+// accepted on the phone — usually staged by §10.7 promotion). Every gate must hold
+// (standingGrantHeld): the authorization matched (unexpired, scoped to this client, bound
+// to this call); the action is reversible and not high; GitHub raised nothing; the profile
+// copy is at most GRANT_FRESH_DAYS old; and no "no" in that domain within GRANT_PUSHBACK_DAYS
+// (lib/rule-leeway.js — shared with the server).
+// Claude Code only — other agents' hooks never get the dependency.
+//
+// Why a cached read may apply a rule at all: the hook cannot read live (a live pull needs the
+// subject to approve on the phone, which would trade one prompt for another), and the
+// alternative is a rule that never fires. Bounded instead, by the same leeway the server's
+// stale-authority guard uses (lib/rule-leeway.js): the copy's age caps how long a rule withdrawn
+// on the phone can still act, and the pushback gate is a brake on THIS machine — one "no" stops
+// it at once. Outside that one case the hook reads the at-rest cache and skips the guard
+// because nothing it does can EXPAND autonomy.
 //
 // WHERE OUTCOMES COME FROM — SUBJECT-AUTHORED ONLY (§10.6 honesty rail). The one thing the
 // hook records itself is a yes the subject gave on a prompt, and it records that only on
@@ -50,6 +61,7 @@ import { execFile } from 'child_process';
 import { classifyShipCommand, classifyToolCall } from '../ship-actions.js';
 import { isMainModule } from '../lib/is-main.js';
 import { isDirectoryEdition } from '../lib/config-dir.js';
+import { ruleLeeway, RULE_FRESH_DAYS, RULE_PUSHBACK_DAYS } from '../lib/rule-leeway.js';
 
 const MCP_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -81,6 +93,31 @@ export const TRANSCRIPT_TAIL_BYTES = 4 * 1024 * 1024;
 export const STALE_PROFILE_DAYS = 14;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PENDING_TTL_MS = DAY_MS;
+
+// The copy's age and the "one no pauses it" window — the SAME leeway the server's stale guard
+// gives a rule (lib/rule-leeway.js), so a merge and a direct consult can't disagree.
+export const GRANT_FRESH_DAYS = RULE_FRESH_DAYS;
+export const GRANT_PUSHBACK_DAYS = RULE_PUSHBACK_DAYS;
+
+/**
+ * May the subject's standing rule answer this prompt? PURE. Returns { ok: true } or
+ * { ok: false, why } where `why` is one of: no_rule | raised | not_reversible | high |
+ * magnitude_unstated | priced | stale | pushback.
+ * `auth` is checkAuthorization's result; `source` is the profile read's provenance (sourceOf).
+ */
+export function standingGrantHeld({ auth, descriptor, raised, source, receipts, now }) {
+  if (!auth?.authorization_matched || auth.signal !== 'proceed') return { ok: false, why: 'no_rule' };
+  if (raised) return { ok: false, why: 'raised' };
+  return ruleLeeway({ source, descriptor, receipts, now });
+}
+
+// What the agent is told when the subject's rule answered the prompt.
+export function grantContext(receiptId) {
+  return `This ran without a confirmation prompt: the user's own standing rule in Phaedo covers it ` +
+    `(routine, reversible). Tell them in one line that it went ahead under their rule. If they object, ` +
+    `call phaedo_record_outcome with receipt_id ${receiptId} and "rejected" (or "modified") — one ` +
+    `"no" pauses the rule on this computer.`;
+}
 
 // The caller label on the receipt. `via` stays `phaedo_consult` — the hook runs a full
 // consultation through the same path, and the receipt schema's `via` enum is closed — so
@@ -373,29 +410,40 @@ export async function runShipHook(input, deps) {
     };
     const { response, drivers, source } = await deps.consult(request);
     const signal = String(response?.signal || '');
+    const asked = ASKING_SIGNALS.has(signal);
+    // The one way this hook removes a prompt: the subject's own standing rule (see header).
+    let grant = null;
+    if (!asked && signal === 'proceed' && deps.standingGrant) {
+      try { grant = await deps.standingGrant(request, { raised, now }); } catch { grant = null; }
+    }
+    const granted = grant?.ok === true;
     // Provenance: what the hook saw, beside what drove the answer. Local receipt only.
     const extra = [];
     if (ci) extra.push({ cue: 'ciState', value: ci, confidence: null, basis: ci === 'unknown' ? null : 'observed' });
     if (ci && deps.prFacts) extra.push({ cue: 'diffStakes', value: stakesValue(stakes), confidence: null, basis: stakes ? 'observed' : null });
+    if (grant) extra.push({ cue: 'standingGrant', value: granted ? 'answered' : `held:${grant.why}`, confidence: null, basis: 'observed' });
     const allDrivers = extra.length ? [...(drivers || []), ...extra] : drivers;
     const receiptId = await deps.writeReceipt({ request, response, drivers: allDrivers });
     if (!receiptId) return null;     // no receipt = nothing to learn from; stay out of the way
-    const asked = ASKING_SIGNALS.has(signal);
 
     const state = readState(deps.statePath);
     if (input.tool_use_id) {
       state.pending[input.tool_use_id] = {
         receipt_id: receiptId, cmd_hash: callHash(input), session_id: input.session_id || null,
-        asked, prompt_shown: false, at: new Date(now).toISOString(),
+        asked, granted, prompt_shown: false, at: new Date(now).toISOString(),
       };
     }
-    let context = preContext({
-      summary: ship.summary, signal, receiptId, asked, recordsNo: Boolean(deps.readTranscript),
-      hint: typeof response?.rationale_hint === 'string' ? response.rationale_hint : '',
-    });
+    let context = granted
+      ? `Phaedo was consulted before this action (${ship.summary}) and answered "${signal}". receipt_id: ${receiptId}. ${grantContext(receiptId)}`
+      : preContext({
+        summary: ship.summary, signal, receiptId, asked, recordsNo: Boolean(deps.readTranscript),
+        hint: typeof response?.rationale_hint === 'string' ? response.rationale_hint : '',
+      });
     if (raised) context += ` GitHub shows ${why}, so Phaedo treated this merge as high-stakes.`;
     const ageDays = source && source.live === false && Number.isFinite(source.ageMs) ? Math.floor(source.ageMs / DAY_MS) : 0;
-    if (ageDays >= STALE_PROFILE_DAYS && !(now - Date.parse(state.stale_noted_at) < DAY_MS)) {
+    // A rule held back only by the copy's age is worth a refresh nudge before the general one.
+    const staleNudge = ageDays >= STALE_PROFILE_DAYS || grant?.why === 'stale';
+    if (staleNudge && !(now - Date.parse(state.stale_noted_at) < DAY_MS)) {
       context += ' ' + staleContext(ageDays, deps.mcpDir || MCP_DIR);
       state.stale_noted_at = new Date(now).toISOString();
     }
@@ -404,6 +452,7 @@ export async function runShipHook(input, deps) {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         ...(asked ? { permissionDecision: 'ask', permissionDecisionReason: promptReason(signal, ship.summary, why, personalWhy(request.action_descriptor, response)) } : {}),
+        ...(granted ? { permissionDecision: 'allow', permissionDecisionReason: `Phaedo: your standing rule covers this (${ship.summary}).` } : {}),
         additionalContext: context,
       },
     };
@@ -452,24 +501,40 @@ export async function runShipHook(input, deps) {
 // `agentId` names the agent on the receipt; other agents' hooks (agent-hook.mjs) pass their own.
 export async function realDeps({ agentId = AGENT_ID, statePath } = {}) {
   const { loadConsultVd, buildConsultOpts } = await import('../consult-runtime.js');
-  const { resolveConsultation, consultDrivers, withRevision } = await import('../consult.js');
-  const { buildReceipt, appendReceipt, receiptsCapFromEnv } = await import('../receipts.js');
+  const { resolveConsultation, consultDrivers, withRevision, checkAuthorization } = await import('../consult.js');
+  const { buildReceipt, appendReceipt, receiptsCapFromEnv, readReceipts } = await import('../receipts.js');
   const { sourceOf } = await import('../fingerprint-source.js');
   const { defaultStateDir } = await import('../cache.js');
   const stateDir = defaultStateDir();
   const quiet = () => {};
   const opts = buildConsultOpts(MCP_DIR, process.env, { warn: quiet });
+  let consultedVd = null;            // the profile the consult read — the grant is checked against the same copy
+  let readSource = null;             // ...and how old that copy really is (taken before the overlay drops it)
   return {
     statePath: statePath || join(stateDir, 'ship-hook.json'),
     agentId,
     mcpDir: MCP_DIR,
     prFacts: (ship, cwd) => lookupPrFacts(ship, cwd),
+    // Only Claude Code's hook may answer a prompt; other agents' hooks never get this.
+    ...(agentId === AGENT_ID ? {
+      async standingGrant(request, { raised, now }) {
+        if (!consultedVd || !readSource) return { ok: false, why: 'no_rule' };
+        return standingGrantHeld({
+          auth: checkAuthorization(consultedVd, request, opts),
+          descriptor: request.action_descriptor, raised, source: readSource,
+          receipts: await readReceipts(stateDir), now,
+        });
+      },
+    } : {}),
     async consult(request) {
-      const vd = await loadConsultVd(MCP_DIR, { preferCache: true, warn: quiet });
+      const vd = await loadConsultVd(MCP_DIR, { preferCache: true, warn: quiet, onRead: (plain) => { readSource = sourceOf(plain); } });
+      consultedVd = vd;
       const response = await resolveConsultation(vd, request, opts);
       let drivers = [];
       try { drivers = withRevision(consultDrivers(vd, request, opts), response); } catch { /* provenance is non-critical */ }
-      return { response, drivers, source: sourceOf(vd) };
+      // The plain read's provenance — `sourceOf(vd)` on the overlay always says "live", which is
+      // also why the 14-day refresh nudge below never fired before 0.3.17.
+      return { response, drivers, source: readSource };
     },
     async writeReceipt({ request, response, drivers }) {
       const r = buildReceipt({ via: 'phaedo_consult', agentId, clientId: opts.clientId, request, response, drivers });

@@ -28,8 +28,9 @@ import { buildIntentMandatePayload } from './ap2.js';
 import { depositSignRequest, pollSignOnce } from './signing-request.js';
 import { buildSigningAuditRecord, appendSigningAudit } from './signing-audit.js';
 import { buildInjectionResponse, errorResponse, PhaedoError } from './projection.js';
-import { resolveConsultation, checkAuthorization, CONSULTATION_TYPES, consultDrivers, withRevision } from './consult.js';
+import { resolveConsultation, checkAuthorization, standingRuleRelaxes, CONSULTATION_TYPES, consultDrivers, withRevision } from './consult.js';
 import { defaultStateDir } from './cache.js';
+import { ruleLeeway, RULE_FRESH_DAYS } from './lib/rule-leeway.js';
 import { buildConsultOpts, loadConsultVd } from './consult-runtime.js';
 import { buildReceipt, appendReceipt, receiptsCapFromEnv, readReceipts, markOutcome, USER_ACTIONS } from './receipts.js';
 
@@ -65,12 +66,43 @@ async function emitReceipt(via, args, response, drivers) {
 const EXPANDING_SIGNALS = new Set(['proceed', 'autoproceed', 'bias_bold']);
 
 /**
- * Downgrade an authority-EXPANDING answer that was computed from a stale (cached) read.
- * Returns the response unchanged for a live read, or for any answer that already defers.
+ * Downgrade an authority-EXPANDING answer that was computed from a stale (cached) read AND rests
+ * on one of the subject's own relaxing rules (`ruleDecided`). Returns the response unchanged for a
+ * live read, for any answer that already defers, and for Phaedo's inferred judgment.
  * Always annotates provenance so the caller can SAY where the answer came from — the
  * silence is what let a stale "you're authorized" go unnoticed for a day.
+ *
+ * RULES ONLY (Randy's decision, 2026-10-31). The danger a cached copy carries is a REVOKED GRANT
+ * (the 2026-07-25 $500 payment). An inferred "proceed" is a reading of the subject's disposition,
+ * not a revocable permission. Guarding it too would turn nearly every consult into an ask, since
+ * the phone is rarely reachable. The question only arose because this guard had never engaged on
+ * consult/escalate: the overlay dropped the provenance marker (carrySource fixes that).
+ *
+ * THE LEEWAY (Randy, 2026-10-31: "align them"). `leeway` = lib/rule-leeway.js said the cached copy
+ * may still apply the rule: reversible, stated low/medium, no money, copy ≤ RULE_FRESH_DAYS old,
+ * no recent "no" in the domain — the same test the Claude Code ship hook applies before it
+ * answers a prompt, so a merge and a direct consult give the same answer. Anything outside it
+ * (a payment, an irreversible or high-stakes action, an older copy) is withheld as before.
  */
-function withStaleAuthorityGuard(response, vd) {
+// Can't tell → treat it as rule-decided, so the guard applies (fail closed).
+function ruleRelaxes(vd, req) {
+  try { return standingRuleRelaxes(vd, req, CONSULT_OPTS); } catch { return true; }
+}
+
+// What the guard needs to know about this request, in one place for all three tools. The leeway
+// is only worked out for a cached copy (a live read is never withheld); can't tell → no leeway.
+async function guardFacts(vd, req, ruleDecided = ruleRelaxes(vd, req)) {
+  const src = sourceOf(vd);
+  if (src.live || !ruleDecided) return { ruleDecided };
+  try {
+    const receipts = await readReceipts(defaultStateDir());
+    return { ruleDecided, leeway: ruleLeeway({ source: src, descriptor: req?.action_descriptor, receipts, now: Date.now() }).ok };
+  } catch {
+    return { ruleDecided, leeway: false };
+  }
+}
+
+function withStaleAuthorityGuard(response, vd, { ruleDecided = true, leeway = false } = {}) {
   const src = sourceOf(vd);
   const out = { ...response };
   const hours = src.ageMs != null ? Math.round(src.ageMs / 3600000) : null;
@@ -79,6 +111,12 @@ function withStaleAuthorityGuard(response, vd) {
     : { live: false, cached_age_hours: hours, note: 'Answered from a cached profile — the subject\'s device could not be reached.' };
   if (src.live) return out;
   if (!EXPANDING_SIGNALS.has(String(response?.signal))) return out;
+  if (!ruleDecided) return out;
+  if (leeway) {
+    out.profile_source.note = `Answered from a cached profile${hours != null ? ` about ${hours}h old` : ''}: the subject's standing ` +
+      `rule still applies to a reversible, lower-stakes action from a copy up to ${RULE_FRESH_DAYS} days old.`;
+    return out;
+  }
 
   out.signal = 'escalate';
   out.authorization_matched = false;
@@ -334,7 +372,7 @@ server.registerTool(
       // profile with no downgrade and no provenance. That is the 2026-07-25 device defect (a
       // revoked $500 grant honoured from a 22h cache) still live on the paths that matter most.
       const raw = await resolveConsultation(vd, args || {}, CONSULT_OPTS);
-      const response = withStaleAuthorityGuard(raw, vd);
+      const response = withStaleAuthorityGuard(raw, vd, await guardFacts(vd, args || {}));
       // Provenance for the local audit receipt only — the cues that drove this
       // (never in `response`; §10.4). Best-effort: a failure must not block the answer.
       let drivers = [];
@@ -411,7 +449,7 @@ server.registerTool(
       // deterministic pre-flight is a resolution and produces a receipt."
       const preGuard = checkAuthorization(vd, req, CONSULT_OPTS);
       const matchedPreGuard = preGuard.authorization_matched === true;
-      const response = withStaleAuthorityGuard(preGuard, vd);
+      const response = withStaleAuthorityGuard(preGuard, vd, await guardFacts(vd, req, matchedPreGuard));
       // A matched pre-flight IS a resolved decision (the authorization fired) →
       // receipt. A no-match is not a decision — no receipt (keeps the store from
       // filling with probes; the follow-up phaedo_consult writes its own).
@@ -550,7 +588,7 @@ server.registerTool(
       // and then told the agent the signal was not blocking — i.e. "just proceed", and never
       // wake the subject, on authority that may have been revoked hours earlier.
       const raw = await resolveConsultation(vd, req, CONSULT_OPTS);
-      const response = withStaleAuthorityGuard(raw, vd);
+      const response = withStaleAuthorityGuard(raw, vd, await guardFacts(vd, req));
       let drivers = [];
       try { drivers = withRevision(consultDrivers(vd, req, CONSULT_OPTS), raw); } catch { /* non-critical */ }
       const escReceiptId = await emitReceipt('phaedo_escalate', req, response, drivers);   // the decision being escalated

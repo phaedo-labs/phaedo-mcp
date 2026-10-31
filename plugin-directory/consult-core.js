@@ -15,7 +15,7 @@
 // abstain. Signals out, never structure out (§10.4).
 
 import { PhaedoError } from './errors.js';
-import { loadPolicies, applyPolicies, matchAuthorization } from './consult-policy.js';
+import { loadPolicies, applyPolicies, matchAuthorization, relaxingRuleApplies } from './consult-policy.js';
 import { normalizeActionBinding, isBound } from './action-binding.js';
 import { normalizeDomain, canonicalDomain } from './lib/domain.js';
 
@@ -913,6 +913,17 @@ export function resolveConsultationCore(vd, request = {}, opts = {}) {
 // Back-compat alias: the prior public name of the sync rule entry. Kept so existing
 // importers (tests, spec/test-schemas.mjs) are unchanged.
 export const buildConsultationResponse = resolveConsultationCore;
+
+/**
+ * Does one of the subject's own RELAXING rules (a §10.5 `autoproceed` grant or a `bias_bold`)
+ * apply to this request? The server's stale-authority guard withholds an expanding answer from a
+ * cached profile only when this is true: a grant is revocable, and the copy may predate the
+ * revocation. Phaedo's inferred judgment carries no such risk and is left alone.
+ */
+export function standingRuleRelaxes(vd, request = {}, opts = {}) {
+  const n = normalizeRequest(request);
+  return relaxingRuleApplies(n, loadPolicies(vd, opts), policyCtx(opts));
+}
 
 // ── Deterministic-only authorization check (brief M3) ─────────────────────────
 // (vd, request[, opts]) -> a small, fixed-shape result. Checks ONLY standing

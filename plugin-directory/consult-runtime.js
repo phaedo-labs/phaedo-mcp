@@ -9,7 +9,7 @@
 import { join } from 'path';
 import { configDir } from './lib/config-dir.js';
 import { readFileSync, existsSync } from 'fs';
-import { loadFingerprint, loadFingerprintPreferCache } from './fingerprint-source.js';
+import { loadFingerprint, loadFingerprintPreferCache, carrySource } from './fingerprint-source.js';
 import { readServingClientId } from './phone-source.js';
 import { consultOptsFromEnv, deriveDelegationSignals, withDelegationSignals, authoredDelegationSignals } from './consult.js';
 import { defaultStateDir } from './cache.js';
@@ -43,17 +43,26 @@ export function buildConsultOpts(baseDir, env = process.env, { warn = (m) => pro
 // origin-aware resolver then lets a `delegation` correction outrank a `self` signal on
 // the same dimension. Best-effort — if receipts are unreadable, the consult still
 // answers from the plain fingerprint (delegation learning never breaks a consultation).
-export async function loadConsultVd(baseDir, { preferCache = false, warn = (m) => process.stderr.write(m) } = {}) {
+//
+// `onRead(vd)` sees the plain read BEFORE the overlay. The overlay is a spread copy, and the
+// read's provenance (fingerprint-source.js SOURCE) is a non-enumerable marker a spread drops —
+// so `sourceOf()` on the RETURNED profile always says "live". A caller that needs the copy's
+// real age (the ship hook's standing-rule gate) must take it here.
+export async function loadConsultVd(baseDir, { preferCache = false, warn = (m) => process.stderr.write(m), onRead } = {}) {
   // preferCache (escalation, ship hook): read the at-rest cache instead of a live phone
   // pull, so the caller doesn't add a fingerprint-read AUTHORIZE prompt on the phone.
   const vd = preferCache ? await loadFingerprintPreferCache(baseDir) : await loadFingerprint(baseDir);
+  if (onRead) onRead(vd);
   try {
     // Two delegation sources, both origin-aware: live override history (every override)
     // + the subject's ENDORSED, portable delegation rules (authored_delegation). The
     // authored rule thus shapes consult too, not only the §9 injection it already renders in.
     const signals = deriveDelegationSignals(await readReceipts(defaultStateDir()))
       .concat(authoredDelegationSignals(vd && vd.phaedo_fingerprint));
-    return withDelegationSignals(vd, signals);
+    // The overlay is a spread COPY and the read's provenance is a non-enumerable marker, so it
+    // must be carried across — without it every cached read looked live and the server's
+    // stale-authority guard never engaged on phaedo_consult / phaedo_escalate (found 2026-10-31).
+    return carrySource(vd, withDelegationSignals(vd, signals));
   } catch (e) {
     warn(`[phaedo-mcp] delegation derive skipped (consult unaffected): ${e.message}\n`);
     return vd;

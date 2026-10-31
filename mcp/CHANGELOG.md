@@ -1,5 +1,80 @@
 # Changelog — phaedo-mcp
 
+## 0.3.19 — unreleased
+
+### A merge and a direct question get the same answer
+
+After 0.3.18 the two paths disagreed about how old a profile copy may be before your rule stops
+applying: the Claude Code ship hook allowed 7 days, the server's stale guard allowed none — so with
+the engineering rule accepted, a merge went ahead while an agent asking Phaedo directly about the
+same kind of action was told to check with you. One definition now, `lib/rule-leeway.js`, used by
+both. A cached copy may still apply your rule only when:
+
+- the action is reversible and its stakes are stated as low or medium;
+- it moves no money — every payment stays live-only (the 2026-07-25 incident's class);
+- the copy is at most 7 days old;
+- you haven't said no (rejected or modified) in that area in the last 30 days.
+
+Anything else is withheld from a cached copy, as before. When the leeway applies, the answer says
+so (`profile_source.note`). Stricter for the hook in one place: an action whose stakes weren't
+stated no longer qualifies.
+
+## 0.3.18 — unreleased
+
+### A stale copy can't use a rule you may have withdrawn — and now that's actually checked
+
+The stale-profile guard (added after the 2026-07-25 incident, where a withdrawn $500 payment
+permission kept working from a 22-hour-old copy) had never engaged on `phaedo_consult` or
+`phaedo_escalate`. The act-as-me overlay is a spread copy, and a spread drops the read's
+non-enumerable provenance marker, so every cached read looked live — whenever the subject had a
+delegation signal, which on the reference Mac was always. Only `phaedo_check_authorization`,
+which skips the overlay, was guarded.
+
+- **Fixed:** `loadConsultVd` carries the marker across (`carrySource`), so the server sees a
+  cached copy as cached.
+- **Scoped to your rules (Randy's decision, 2026-10-31):** the guard now withholds an expanding
+  answer from a cached copy only when one of the subject's own relaxing rules (a §10.5
+  `autoproceed` grant or a `bias_bold`) applies (`standingRuleRelaxes`). Phaedo's inferred
+  "proceed" stands, still labelled as coming from a cached copy. Turning the guard back on as
+  written would have made nearly every consult an ask, since the phone is rarely reachable.
+  If the rule check fails, the answer is treated as rule-decided (fail closed).
+- On this Mac: an engineering consult from the 11-day-old copy still answers `proceed`
+  (no rule involved). The July payment case still escalates.
+
+## 0.3.17 — unreleased
+
+### Your rule answers Claude Code's prompt for you
+
+Until now the ship hook could only add a question, never answer one, so accepting a "go ahead
+without asking" rule on the phone left Claude Code's own prompt in place. Now, when the
+subject's own standing rule covers the action, the hook returns `allow` — every one of these
+must hold (`standingGrantHeld`):
+
+- **Your rule matched:** an accepted, unexpired §10.5 `autoproceed` authorization, scoped to
+  this client and bound to this exact call. A Phaedo "go ahead" on its own never does this.
+- **Small and undoable:** the action is reversible and not high-stakes, and GitHub showed
+  nothing that raises the stakes (failing or unfinished checks, a large or sensitive change).
+  An `--admin` merge still asks.
+- **A recent copy:** Phaedo's copy of your profile is at most 7 days old. A rule you withdraw on
+  the phone reaches this computer with the next live read, so this caps how long a withdrawn
+  rule can keep acting. Past it the agent tells you to run `npm run pull`.
+- **No recent no:** one rejection or "do it differently" in that area in the last 30 days pauses
+  the rule on this computer at once.
+
+Claude Code only; other agents' hooks never answer a prompt. The agent is told the action ran
+under your rule and to record it if you object. The receipt notes whether the rule answered or
+what held it back (`standingGrant` driver).
+
+**Also fixed:** the hook read the profile copy's age from the act-as-me overlay, which is a
+spread copy that drops the age marker — so every cached copy looked fresh. That would have made
+the 7-day gate always pass, and it is why the 14-day "refresh your profile" nudge never fired.
+`loadConsultVd` gains `onRead`, and the hook takes the age from the plain read.
+
+**Not changed, and open:** the MCP server's own stale-profile guard (`phaedo_consult`,
+`phaedo_escalate`) reads the age the same way, so it has never engaged on those tools when the
+subject has any delegation signal. Fixing it as written would turn every Phaedo "go ahead" from a
+cached copy into an ask, so it is held for a decision. *(Decided and fixed in 0.3.18.)*
+
 ## 0.3.16 — unreleased
 
 ### Phaedo can offer to stop asking again

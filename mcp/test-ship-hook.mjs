@@ -18,8 +18,11 @@ import {
   ciStateFromRollup, lookupCiState, CI_RAISES,
   lookupPrFacts, diffStakes, isSensitivePath, parseSensitiveList, stakesValue, raiseWords,
   LARGE_LINES, LARGE_FILES, SENSITIVE_FILE,
+  standingGrantHeld, GRANT_FRESH_DAYS, GRANT_PUSHBACK_DAYS, realDeps,
 } from './hooks/pre-ship.mjs';
 import { SIGNALS } from './consult-core.js';
+import { checkAuthorization } from './consult.js';
+import { classifyToolCall } from './ship-actions.js';
 
 let pass = 0;
 const ok = (c, m) => { assert.ok(c, m); pass++; };
@@ -199,13 +202,119 @@ try {
     ok(!existsSync(n.deps.statePath), 'receipt write failed → nothing pending');
   }
 
-  // ── THE RULE: the hook never returns `allow`, for any signal Phaedo can produce ──────
+  // ── THE RULE: without the subject's standing rule the hook never returns `allow` ─────
   for (const sig of [...SIGNALS, 'autoproceed', 'bias_bold', '', 'garbage']) {
     const { deps } = mk(sig);
     const out = await runShipHook(pre('gh pr merge 1'), deps);
     const d = out?.hookSpecificOutput?.permissionDecision;
-    ok(d === undefined || d === 'ask', `never allow/deny (${sig || 'empty'})`);
+    ok(d === undefined || d === 'ask', `never allow/deny without a standing rule (${sig || 'empty'})`);
     ok((d === 'ask') === ASKING_SIGNALS.has(sig), `asks exactly on cautious signals (${sig || 'empty'})`);
+  }
+
+  // ── The one exception: the subject's own standing rule answers the prompt ───────────
+  {
+    const grantDeps = (signal, grant) => {
+      const m = mk(signal);
+      m.log.grants = [];
+      m.deps.standingGrant = async (req, o) => { m.log.grants.push([req, o]); if (grant instanceof Error) throw grant; return grant; };
+      return m;
+    };
+    {
+      const { deps, log } = grantDeps('proceed', { ok: true });
+      const h = (await runShipHook(pre('gh pr merge 7 --squash'), deps)).hookSpecificOutput;
+      ok(h.permissionDecision === 'allow', 'rule held → allow');
+      ok(/standing rule/.test(h.permissionDecisionReason) && !/\d\.\d|signal|subject/i.test(h.permissionDecisionReason), 'allow reason is plain words');
+      ok(/standing rule/.test(h.additionalContext) && h.additionalContext.includes('receipt_id rcpt-1'), 'agent told it ran under the rule, with the receipt id');
+      ok(/one "no" pauses the rule/.test(h.additionalContext), 'agent told how a no stops it');
+      ok(log.receipts[0].drivers.some((d) => d.cue === 'standingGrant' && d.value === 'answered'), 'receipt says the rule answered');
+      ok(readState(deps.statePath).pending['tu-1'].granted === true, 'pending entry marked granted');
+      await runShipHook(post(), deps);
+      ok(log.marks.length === 0, 'an allowed run records no outcome — silence is not approval');
+      ok(log.grants[0][1].raised === false, 'the grant check is told whether GitHub raised the stakes');
+    }
+    for (const why of ['stale', 'pushback', 'no_rule']) {
+      const { deps, log } = grantDeps('proceed', { ok: false, why });
+      const h = (await runShipHook(pre('gh pr merge 7 --squash'), deps)).hookSpecificOutput;
+      ok(!('permissionDecision' in h), `rule held back (${why}) → no decision; Claude Code asks as usual`);
+      ok(log.receipts[0].drivers.some((d) => d.cue === 'standingGrant' && d.value === `held:${why}`), `receipt records why (${why})`);
+    }
+    {
+      const { deps } = grantDeps('proceed', new Error('vault unreadable'));
+      const h = (await runShipHook(pre('gh pr merge 7 --squash'), deps)).hookSpecificOutput;
+      ok(!('permissionDecision' in h), 'the grant check throwing → no decision (fail-safe)');
+    }
+    for (const sig of ['proceed_with_note', 'escalate', 'clarify', 'decline', 'insufficient_signal']) {
+      const { deps, log } = grantDeps(sig, { ok: true });
+      const d = (await runShipHook(pre('gh pr merge 7 --squash'), deps)).hookSpecificOutput.permissionDecision;
+      ok(d !== 'allow' && log.grants.length === 0, `only a plain proceed is checked against the rule (${sig})`);
+    }
+    {
+      ok(GRANT_FRESH_DAYS === 7 && GRANT_PUSHBACK_DAYS === 30, 'bounds as documented');
+      const stale = mk('proceed', { source: { live: false, ageMs: 9 * DAY }, statePath: join(dir, 'grant-stale.json') });
+      stale.deps.standingGrant = async () => ({ ok: false, why: 'stale' });
+      const h = (await runShipHook(pre('gh pr merge 7 --squash'), stale.deps)).hookSpecificOutput;
+      ok(/npm run pull/.test(h.additionalContext), 'a rule held back only by an old copy → told how to refresh, before the 14-day nudge');
+    }
+  }
+
+  // ── standingGrantHeld: every gate, PURE ───────────────────────────────────────────────
+  {
+    const auth = { authorization_matched: true, signal: 'proceed' };
+    const descriptor = { domain: 'engineering', reversible: true, magnitude: 'medium' };
+    const base = { auth, descriptor, raised: false, source: { live: true }, receipts: [], now: NOW };
+    const held = (over) => standingGrantHeld({ ...base, ...over });
+    const no = (r, created = NOW - DAY, domain = 'engineering') => ({ user_action: r, user_action_at: new Date(created).toISOString(), request: { action_descriptor: { domain } } });
+    ok(held({}).ok === true, 'all gates pass → ok');
+    ok(held({ auth: { authorization_matched: false, signal: null } }).why === 'no_rule', 'no authorization matched → no');
+    ok(held({ auth: { authorization_matched: true, signal: 'escalate' } }).why === 'no_rule', 'a restrictive rule never allows');
+    ok(held({ auth: null }).why === 'no_rule', 'missing check → no');
+    ok(held({ descriptor: { ...descriptor, reversible: false } }).why === 'not_reversible', 'irreversible → no, whatever the rule says');
+    ok(held({ descriptor: { ...descriptor, reversible: undefined } }).why === 'not_reversible', 'unstated reversibility → no');
+    ok(held({ descriptor: { ...descriptor, magnitude: 'high' } }).why === 'high', 'high stakes → no, whatever the rule says');
+    ok(held({ raised: true }).why === 'raised', 'GitHub raised the stakes → no');
+    ok(held({ source: { live: false, ageMs: 6 * DAY } }).ok === true, 'a copy under 7 days old → ok');
+    ok(held({ source: { live: false, ageMs: 8 * DAY } }).why === 'stale', 'a copy over 7 days old → no');
+    ok(held({ source: { live: false, ageMs: null } }).why === 'stale', 'a copy of unknown age → no');
+    ok(held({ receipts: [no('rejected')] }).why === 'pushback', 'one recent no in the domain → paused');
+    ok(held({ receipts: [no('modified')] }).why === 'pushback', 'a recent "do it differently" → paused');
+    ok(held({ receipts: [no('rejected', NOW - 31 * DAY)] }).ok === true, 'a no older than 30 days no longer pauses it');
+    ok(held({ receipts: [no('rejected', NOW - DAY, 'finance')] }).ok === true, 'a no in another domain does not pause this one');
+    ok(held({ receipts: [no('approved')] }).ok === true, 'approvals never pause it');
+  }
+
+  // ── The real matcher accepts the hook's own request shape (end to end, no vault I/O) ─
+  {
+    const vd = JSON.parse(readFileSync(join(HERE, 'sample-fingerprint.json'), 'utf8'));
+    const ship = classifyToolCall('Bash', { command: 'gh pr merge 5 --squash' });
+    const request = { consultation_type: 'action_approval', agent_id: AGENT_ID, action_descriptor: ship.action_descriptor, action_binding: ship.action_binding };
+    const rule = (over = {}) => ({
+      instruction_id: 'auth-eng', kind: 'authorization', effect: 'autoproceed', require_binding: true,
+      match: { domains: ['engineering'], reversible: true, magnitude_max: 'medium' },
+      expires_at: new Date(Date.now() + 30 * DAY).toISOString(), ...over,
+    });
+    const withRule = (r) => ({ ...vd, phaedo_fingerprint: { ...vd.phaedo_fingerprint, standing_rules: [...(vd.phaedo_fingerprint.standing_rules || []), r] } });
+    const a = checkAuthorization(withRule(rule()), request, {});
+    ok(a.authorization_matched === true && a.signal === 'proceed', 'an accepted engineering rule matches a plain merge');
+    ok(checkAuthorization(withRule(rule({ expires_at: new Date(Date.now() - DAY).toISOString() })), request, {}).authorization_matched === false, 'an expired rule does not');
+    const admin = classifyToolCall('Bash', { command: 'gh pr merge 5 --admin' });
+    ok(checkAuthorization(withRule(rule()), { ...request, action_descriptor: admin.action_descriptor, action_binding: admin.action_binding }, {}).authorization_matched === false, 'an --admin merge (high) is outside a medium rule');
+    ok(checkAuthorization(withRule(rule()), { ...request, action_binding: undefined }, {}).authorization_matched === false, 'an unbound request never unlocks it');
+    ok(checkAuthorization(withRule(rule({ agents: ['c_someone_else'] })), request, { clientId: 'c_me' }).authorization_matched === false, 'a rule scoped to another client does not');
+  }
+
+  // ── Only Claude Code's hook may answer a prompt ──────────────────────────────────────
+  {
+    const own = await realDeps({ statePath: join(dir, 'rd1.json') });
+    const other = await realDeps({ agentId: 'cursor/ship-hook', statePath: join(dir, 'rd2.json') });
+    ok(typeof own.standingGrant === 'function', 'Claude Code gets the grant check');
+    ok(other.standingGrant === undefined, 'other agents never do');
+    // The copy's age must come from the PLAIN read: the consult overlay is a spread copy that
+    // drops the non-enumerable provenance marker, so sourceOf() on it always said "live" — the
+    // freshness gate would always pass, and the 14-day refresh nudge never fired.
+    const src = readFileSync(join(HERE, 'hooks', 'pre-ship.mjs'), 'utf8');
+    ok(/onRead: \(plain\) => \{ readSource = sourceOf\(plain\); \}/.test(src) && /return \{ response, drivers, source: readSource \}/.test(src)
+      && /source: readSource,/.test(src), 'the hook takes the copy\'s age before the overlay, for the gate and the nudge');
+    ok(!/sourceOf\(consultedVd\)|sourceOf\(vd\) \}/.test(src), 'and never from the overlay');
   }
 
   // ── Stale profile: told once a day, only past the threshold, only for a cached read ─

@@ -446,6 +446,15 @@ function agentScopeSatisfied(rule, clientId) {
   return scope.includes(clientId);                         // [] matches nobody, by design
 }
 
+// Does any RELAXING rule (autoproceed / bias_bold) apply to this request — active, in scope,
+// matched and bound? The stale-authority guard keys on this: an answer that rests on one of the
+// subject's own revocable grants must not be acted on from a copy that may predate a revocation.
+export function relaxingRuleApplies(n, policies, { now = Date.now(), clientId = null } = {}) {
+  if (!policies || !policies.length || !n || n.type === 'voice_draft') return false;
+  return policies.some((r) => RELAXING.has(r.effect) && ruleActive(r, now) && agentScopeSatisfied(r, clientId)
+    && ruleMatches(r, n) && bindingSatisfied(r, n));
+}
+
 // Did a rule match on its own terms and get held back ONLY by the binding gate?
 // Worth reporting: otherwise an agent whose standing auto-proceed rule silently
 // stops firing has no way to learn that it needs to send an action_binding.

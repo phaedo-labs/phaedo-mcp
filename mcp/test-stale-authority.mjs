@@ -82,16 +82,18 @@ console.log('\nprovenance: a live read and a cached read are distinguishable');
     'the marker never survives serialization — it is about the READ, not the artifact');
 }
 
-console.log('\na cached read cannot answer "go ahead"');
+console.log('\na cached read cannot answer "go ahead" on one of the subject\'s rules');
 {
   // Mirror of server.js withStaleAuthorityGuard. Kept in lockstep by the source check below.
   const EXPANDING = new Set(['proceed', 'autoproceed', 'bias_bold']);
-  const guard = (response, src) => {
+  const guard = (response, src, { ruleDecided = true, leeway = false } = {}) => {
     const out = { ...response };
     const hours = src.ageMs != null ? Math.round(src.ageMs / 3600000) : null;
     out.profile_source = src.live ? { live: true } : { live: false, cached_age_hours: hours };
     if (src.live) return out;
     if (!EXPANDING.has(String(response?.signal))) return out;
+    if (!ruleDecided) return out;
+    if (leeway) return out;
     out.signal = 'escalate';
     out.authorization_matched = false;
     out.stale_downgrade = true;
@@ -117,6 +119,16 @@ console.log('\na cached read cannot answer "go ahead"');
     ok(guard({ signal }, staleSrc).signal === signal,
       `a stale "${signal}" is preserved (deference is always safe to honour)`);
   }
+
+  // RULES ONLY (Randy, 2026-10-31). Phaedo's inferred "proceed" is not a revocable permission;
+  // guarding it from a cached copy would turn nearly every consult into an ask.
+  const inferred = guard({ signal: 'proceed' }, staleSrc, { ruleDecided: false });
+  ok(inferred.signal === 'proceed', 'a stale INFERRED "proceed" stands — no grant, nothing to have revoked');
+  ok(inferred.profile_source.live === false && inferred.profile_source.cached_age_hours === 22, '…and still says it came from a 22h-old copy');
+  ok(!inferred.stale_downgrade, '…and is not flagged as downgraded');
+  ok(guard({ signal: 'proceed' }, staleSrc).signal === 'escalate', 'the default is rule-decided — a caller that forgets to say is guarded (fail closed)');
+  ok(guard(matched, staleSrc, { ruleDecided: true, leeway: true }).signal === 'proceed', 'a rule inside the shared leeway still applies from a cached copy');
+  ok(guard(matched, staleSrc, { ruleDecided: true, leeway: false }).signal === 'escalate', '…and outside it, it is withheld');
 }
 
 console.log('\nthe guard is wired into ALL THREE decision tools, not just the pre-flight');
@@ -144,6 +156,23 @@ console.log('\nthe guard is wired into ALL THREE decision tools, not just the pr
     ok(/withStaleAuthorityGuard\(/.test(handler(tool)),
       `${tool} routes its answer through the stale guard`);
   }
+  // Each says whether a rule decided — consult and escalate by asking the policy matcher,
+  // the pre-flight from its own match.
+  for (const tool of ['phaedo_consult', 'phaedo_escalate']) {
+    ok(/withStaleAuthorityGuard\(raw, vd, await guardFacts\(vd, (args \|\| \{\}|req)\)\)/.test(handler(tool)),
+      `${tool} tells the guard whether one of the subject's rules relaxed it, and the leeway`);
+  }
+  ok(/withStaleAuthorityGuard\(preGuard, vd, await guardFacts\(vd, req, matchedPreGuard\)\)/.test(handler('phaedo_check_authorization')),
+    'the pre-flight is rule-decided exactly when an authorization matched');
+  ok(/async function guardFacts\(vd, req, ruleDecided = ruleRelaxes\(vd, req\)\) \{/.test(src)
+     && /if \(src\.live \|\| !ruleDecided\) return \{ ruleDecided \};/.test(src)
+     && /return \{ ruleDecided, leeway: false \};/.test(src)
+     && /leeway: ruleLeeway\(\{ source: src, descriptor: req\?\.action_descriptor, receipts, now: Date\.now\(\) \}\)\.ok/.test(src),
+    'the leeway comes from the shared lib/rule-leeway.js, only for a cached copy, and fails closed');
+  const hook = readFileSync(resolve(HERE, 'hooks', 'pre-ship.mjs'), 'utf8');
+  ok(/return ruleLeeway\(\{ source, descriptor, receipts, now \}\);/.test(hook), 'the ship hook applies the same leeway — a merge and a direct consult agree');
+  ok(/function ruleRelaxes\(vd, req\) \{\s*try \{ return standingRuleRelaxes\(vd, req, CONSULT_OPTS\); \} catch \{ return true; \}/.test(src),
+    'if the matcher throws, the answer is treated as rule-decided (fail closed)');
 
   // And the pre-flight's RECEIPT is gated on the pre-guard result. The guard clears
   // `authorization_matched`, so gating on the post-guard value meant the one case that most
@@ -163,6 +192,74 @@ console.log('\npull.js distinguishes a phone read from a cached one');
   ok(/CACHED copy/.test(src), 'it says plainly when the answer came from cache');
   ok(!/^\s*process\.stdout\.write\(\s*`✓ Read your profile from the phone[\s\S]*?\);\s*$/m.test(src.replace(/if \(src\.live\) \{[\s\S]*?\}/, '')),
     'the unconditional "from the phone" claim is gone');
+}
+
+// ── 5. the consult loader keeps the read's provenance through its overlay ────────────
+// Found 2026-10-31: loadConsultVd returned the act-as-me overlay — a spread copy — and the
+// provenance marker is non-enumerable, so the copy read as LIVE. The guard above therefore never
+// engaged on phaedo_consult / phaedo_escalate whenever the subject had a delegation signal (on
+// the reference Mac: always).
+console.log('\nthe consult loader keeps "this came from the cache" through its overlay');
+{
+  const { carrySource } = await import('./fingerprint-source.js');
+  const { withDelegationSignals } = await import('./consult.js');
+  const vd = { phaedo_fingerprint: { layers: {} } };
+  Object.defineProperty(vd, SOURCE, { value: { live: false, cachedAt: 1, ageMs: 11 * 864e5 }, enumerable: false, configurable: true, writable: true });
+  const sig = [{ layer: 'decision_and_risk', field: 'x', value: 'y' }];
+  ok(sourceOf(withDelegationSignals(vd, sig)).live === true, 'the hazard: a bare overlay copy reads as live');
+  const kept = carrySource(vd, withDelegationSignals(vd, sig));
+  ok(sourceOf(kept).live === false && sourceOf(kept).ageMs === 11 * 864e5, 'carrySource keeps it cached, with its age');
+  ok(carrySource(vd, vd) === vd && sourceOf(carrySource({}, kept)).live === false, 'no-op when there is nothing new or nothing to carry');
+  const rt = readFileSync(resolve(HERE, 'consult-runtime.js'), 'utf8');
+  ok(/return carrySource\(vd, withDelegationSignals\(vd, signals\)\)/.test(rt), 'loadConsultVd passes its overlay through carrySource');
+}
+
+// ── 6. "did one of the subject's rules relax this?" — the guard's question ─────────────
+console.log('\nstandingRuleRelaxes: only the subject\'s own relaxing rules count');
+{
+  const { standingRuleRelaxes } = await import('./consult.js');
+  const base = JSON.parse(readFileSync(resolve(HERE, 'sample-fingerprint.json'), 'utf8'));
+  const DAY = 864e5;
+  const withRules = (rules) => ({ ...base, phaedo_fingerprint: { ...base.phaedo_fingerprint, standing_rules: [], consult_policies: { rules } } });
+  const req = { consultation_type: 'action_approval', action_descriptor: { domain: 'finance', reversible: true, magnitude: 'low', amount: 400 } };
+  const grant = (over = {}) => ({ id: 'g', match: { domains: ['finance'], reversible: true }, effect: 'autoproceed', ...over });
+  ok(standingRuleRelaxes(withRules([grant()]), req) === true, 'THE July case: a matching payment grant relaxes it');
+  ok(standingRuleRelaxes(withRules([grant({ effect: 'bias_bold' })]), req) === true, 'a bold bias is a relaxing rule too');
+  ok(standingRuleRelaxes(withRules([]), req) === false, 'no rules → inferred judgment, not rule-decided');
+  ok(standingRuleRelaxes(withRules([grant({ effect: 'escalate' })]), req) === false, 'a restrictive rule is not a relaxation');
+  ok(standingRuleRelaxes(withRules([grant({ expires_at: new Date(Date.now() - DAY).toISOString() })]), req) === false, 'an expired grant does not count');
+  ok(standingRuleRelaxes(withRules([grant({ match: { domains: ['engineering'] } })]), req) === false, 'a grant for another domain does not count');
+}
+
+// ── 7. the shared leeway: when a cached copy may still apply a rule ───────────────────
+console.log('\nruleLeeway: reversible, lower-stakes, no money, recent copy, no recent no');
+{
+  const { ruleLeeway, RULE_FRESH_DAYS, RULE_PUSHBACK_DAYS } = await import('./lib/rule-leeway.js');
+  const DAY = 864e5, NOW = Date.parse('2026-10-31T20:00:00Z');
+  const d = { domain: 'engineering', reversible: true, magnitude: 'medium' };
+  const cached = (days) => ({ live: false, cachedAt: NOW - days * DAY, ageMs: days * DAY });
+  const L = (over = {}) => ruleLeeway({ source: cached(3), descriptor: d, receipts: [], now: NOW, ...over });
+  const no = (action, daysAgo, domain = 'engineering') => ({ user_action: action, user_action_at: new Date(NOW - daysAgo * DAY).toISOString(), request: { action_descriptor: { domain } } });
+  ok(RULE_FRESH_DAYS === 7 && RULE_PUSHBACK_DAYS === 30, 'bounds: 7-day copy, 30-day "no" window');
+  ok(L().ok === true, 'a routine, reversible action from a 3-day-old copy → ok');
+  ok(L({ source: { live: true } }).ok === true, 'a live read → ok');
+  ok(L({ source: cached(6.9) }).ok === true && L({ source: cached(7.1) }).why === 'stale', 'the copy may be up to 7 days old, not more');
+  ok(L({ source: { live: false, ageMs: null } }).why === 'stale', 'a copy of unknown age → no');
+  ok(L({ descriptor: { ...d, reversible: false } }).why === 'not_reversible', 'irreversible → strict');
+  ok(L({ descriptor: { ...d, reversible: undefined } }).why === 'not_reversible', 'reversibility unstated → strict');
+  ok(L({ descriptor: { ...d, magnitude: 'high' } }).why === 'high', 'high stakes → strict');
+  ok(L({ descriptor: { ...d, magnitude: undefined } }).why === 'magnitude_unstated', 'stakes unstated → strict');
+  ok(L({ descriptor: { ...d, magnitude: 'Low' } }).ok === true, 'magnitude case does not matter');
+  ok(L({ descriptor: { domain: 'finance', reversible: true, magnitude: 'low', amount: 500 } }).why === 'priced', 'THE July case: any payment stays live-only');
+  ok(L({ descriptor: { ...d, amount: 0 } }).why === 'priced', 'even a zero amount is a priced action');
+  ok(L({ descriptor: { ...d, amount: null } }).ok === true, 'a stored null amount is unpriced');
+  ok(L({ receipts: [no('rejected', 2)] }).why === 'pushback', 'one recent no in the domain → strict at once');
+  ok(L({ receipts: [no('modified', 2)] }).why === 'pushback', 'a recent "do it differently" → strict');
+  ok(L({ receipts: [no('rejected', 31)] }).ok === true, 'a no older than 30 days no longer counts');
+  ok(L({ receipts: [no('rejected', 2, 'finance')] }).ok === true, 'a no in another domain does not count');
+  ok(L({ descriptor: { ...d, domain: 'Engineering' } , receipts: [no('rejected', 2)] }).why === 'pushback', 'domains compare canonically (casing)');
+  ok(L({ receipts: [no('approved', 1)] }).ok === true, 'approvals never count against it');
+  ok(ruleLeeway().ok === false && ruleLeeway({}).why === 'not_reversible', 'nothing to go on → strict');
 }
 
 console.log(`\n✓ stale authority: ${pass} checks passed\n`);
