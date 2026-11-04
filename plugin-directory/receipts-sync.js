@@ -78,7 +78,7 @@ function digestFields(r) {
 // Pure-crypto: take the local receipts list, build a §10.4-safe digest of the most
 // recent `cap` entries, and seal it under fp_sync_key. Returns `{ envelope }` — the
 // same shape `agent_to_ext` (delegation-sync) uses, so the relay's mailbox accepts it.
-export async function buildReceiptsDeposit(pairKeyB64u, receipts, { cap = DIGEST_CAP, now = () => new Date().toISOString() } = {}) {
+export async function buildReceiptsDeposit(pairKeyB64u, receipts, { cap = DIGEST_CAP, now = () => new Date().toISOString(), copyAt = null } = {}) {
   const list = Array.isArray(receipts) ? receipts : [];
   // Most-recent N (receipts are append-only, ordered by creation in the store).
   const head = list.slice(-cap).map(digestFields).filter(Boolean);
@@ -100,7 +100,12 @@ export async function buildReceiptsDeposit(pairKeyB64u, receipts, { cap = DIGEST
     // plus the sentence the MCP already shows in /phaedo:status, so both surfaces say the same.
     const w = weeklyHandled(list, { now: Number.isFinite(agreementAt) ? agreementAt : Date.now() });
     const week = { ...w, summary: formatWeekly(w) };
-    const inner = { kind: 'receipts_digest', data: { receipts: head, agreement, week, generated_at: generatedAt } };
+    // How fresh this computer's profile copy is (cache.js readCacheTime), so the phone can show it.
+    // Omitted when there is no copy; never later than this digest.
+    const copy = Number.isFinite(copyAt) && copyAt > 0
+      ? { copy_at: new Date(Math.min(copyAt, Number.isFinite(agreementAt) ? agreementAt : Date.now())).toISOString() }
+      : {};
+    const inner = { kind: 'receipts_digest', data: { receipts: head, agreement, week, generated_at: generatedAt, ...copy } };
     const plaintext = new TextEncoder().encode(JSON.stringify(inner));
     const envelope = await Envelope.wrap(plaintext, fpSyncKey, { artifact_kind: 'receipts_digest', created_at: now() });
     plaintext.fill(0);

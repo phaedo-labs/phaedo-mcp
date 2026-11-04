@@ -58,6 +58,17 @@ export async function clearCache(stateDir) {
   try { await rm(join(stateDir, 'cache.enc'), { force: true }); } catch { /* nothing to clear */ }
 }
 
+// When the at-rest copy was made (ms), without decrypting it; null when there is none. The phone
+// shows this age (receipts digest `copy_at`), so the subject can see the copy keeping up.
+export async function readCacheTime(stateDir) {
+  try {
+    const { cached_at } = JSON.parse(await readFile(join(stateDir, 'cache.enc'), 'utf8'));
+    return Number.isFinite(cached_at) && cached_at > 0 ? cached_at : null;
+  } catch {
+    return null;
+  }
+}
+
 // Decrypt the cache → { vault, cachedAt } or null (absent/corrupt/undecryptable
 // → treated as no cache, since it's recoverable from the phone).
 export async function readCache(stateDir) {

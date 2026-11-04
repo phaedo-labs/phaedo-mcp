@@ -328,8 +328,8 @@ export function unpromptedContext(receiptId) {
 
 export function staleContext(days, mcpDir) {
   return `Also: Phaedo's copy of the user's profile is ${days} days old (their phone has not been ` +
-    `reached since). Mention once, in one line, that they can refresh it by running ` +
-    `\`cd ${mcpDir} && npm run pull\` and approving on their phone.`;
+    `reached since). Mention once, in one line, that opening the Phaedo app on their phone refreshes ` +
+    `it within minutes, or they can run \`cd ${mcpDir} && npm run pull\` and approve on their phone.`;
 }
 
 /**
@@ -421,8 +421,10 @@ export async function runShipHook(input, deps) {
     const extra = [];
     if (ci) extra.push({ cue: 'ciState', value: ci, confidence: null, basis: ci === 'unknown' ? null : 'observed' });
     if (ci && deps.prFacts) extra.push({ cue: 'diffStakes', value: stakesValue(stakes), confidence: null, basis: stakes ? 'observed' : null });
-    if (grant) extra.push({ cue: 'standingGrant', value: granted ? 'answered' : `held:${grant.why}`, confidence: null, basis: 'observed' });
-    const allDrivers = extra.length ? [...(drivers || []), ...extra] : drivers;
+    // First, not last: buildReceipt keeps only the first 16 drivers, and the weekly summary on the
+    // phone counts this one ("your standing rule decided N of them", weekly.js).
+    const lead = grant ? [{ cue: 'standingGrant', value: granted ? 'answered' : `held:${grant.why}`, confidence: null, basis: 'observed' }] : [];
+    const allDrivers = (extra.length || lead.length) ? [...lead, ...(drivers || []), ...extra] : drivers;
     const receiptId = await deps.writeReceipt({ request, response, drivers: allDrivers });
     if (!receiptId) return null;     // no receipt = nothing to learn from; stay out of the way
 

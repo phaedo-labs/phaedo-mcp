@@ -58,7 +58,8 @@ loadFingerprint(BASE_DIR)
       `⚠ Could NOT reach your phone — served a CACHED copy${hours != null ? ` about ${hours}h old` : ''} ` +
       `(fingerprint ${fp.fingerprint_id || '(no id)'}, ${layers} layer(s)).\n` +
       `  Anything you changed since then — including a revoked authorization — is NOT reflected.\n` +
-      `  Open Phaedo on your phone and approve the card, then run this again.\n`
+      `  Opening Phaedo on your phone sends this computer a fresh copy (picked up within 10 minutes);\n` +
+      `  to read it live instead, keep the app open, approve the card, and run this again.\n`
     );
     process.stdout.write(await week() + review(vd));
     process.exit(2);                       // distinct from 1 (hard failure) — stale, not broken

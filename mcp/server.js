@@ -29,8 +29,9 @@ import { depositSignRequest, pollSignOnce } from './signing-request.js';
 import { buildSigningAuditRecord, appendSigningAudit } from './signing-audit.js';
 import { buildInjectionResponse, errorResponse, PhaedoError } from './projection.js';
 import { resolveConsultation, checkAuthorization, standingRuleRelaxes, CONSULTATION_TYPES, consultDrivers, withRevision } from './consult.js';
-import { defaultStateDir } from './cache.js';
+import { defaultStateDir, readCacheTime } from './cache.js';
 import { ruleLeeway, RULE_FRESH_DAYS } from './lib/rule-leeway.js';
+import { standingRuleDriver } from './weekly.js';
 import { buildConsultOpts, loadConsultVd } from './consult-runtime.js';
 import { buildReceipt, appendReceipt, receiptsCapFromEnv, readReceipts, markOutcome, USER_ACTIONS } from './receipts.js';
 
@@ -102,6 +103,13 @@ async function guardFacts(vd, req, ruleDecided = ruleRelaxes(vd, req)) {
   }
 }
 
+// The receipt's note that one of the subject's standing rules let this go ahead (weekly.js counts
+// it for the phone). First in the list, since buildReceipt keeps only the first 16 drivers.
+function ruleAnsweredDriver(vd, req, response) {
+  if (response?.signal !== 'proceed') return [];
+  try { return standingRuleDriver(checkAuthorization(vd, req, CONSULT_OPTS), response); } catch { return []; }
+}
+
 function withStaleAuthorityGuard(response, vd, { ruleDecided = true, leeway = false } = {}) {
   const src = sourceOf(vd);
   const out = { ...response };
@@ -151,9 +159,11 @@ async function maybeDepositReceiptsDigest() {
     // AND "an existing receipt got marked" (so the next phone drain reflects the mark).
     const latest = receipts[receipts.length - 1];
     const tally = receipts.reduce((acc, r) => { acc[r.user_action ?? 'null'] = (acc[r.user_action ?? 'null'] || 0) + 1; return acc; }, {});
-    const sig = `${latest.receipt_id}|${JSON.stringify(tally)}`;
+    // The copy's time rides along, so a fresher copy alone is worth a new digest.
+    const copyAt = await readCacheTime(defaultStateDir());
+    const sig = `${latest.receipt_id}|${JSON.stringify(tally)}|${copyAt}`;
     if (sig === _lastReceiptsSig) return;
-    const res = await depositReceiptsDigest(await loadPairingRecord(BASE_DIR), receipts);
+    const res = await depositReceiptsDigest(await loadPairingRecord(BASE_DIR), receipts, { copyAt });
     if (res && res.deposited) _lastReceiptsSig = sig;
     else if (res && !res.deposited && res.reason !== 'no-receipts')
       process.stderr.write(`[phaedo-mcp] receipts digest deposit skipped: ${res.reason || 'http ' + res.status}\n`);
@@ -377,6 +387,7 @@ server.registerTool(
       // (never in `response`; §10.4). Best-effort: a failure must not block the answer.
       let drivers = [];
       try { drivers = withRevision(consultDrivers(vd, args || {}, CONSULT_OPTS), raw); } catch { /* provenance is non-critical */ }
+      drivers = [...ruleAnsweredDriver(vd, args || {}, response), ...drivers];
       const receiptId = await emitReceipt('phaedo_consult', args, response, drivers); // every resolution, abstains included
       if (receiptId) response.receipt_id = receiptId;   // the handle for phaedo_record_outcome
       await maybeDepositDelegationPromotions(vd);                    // act-as-me promotion (best-effort)
@@ -454,7 +465,8 @@ server.registerTool(
       // receipt. A no-match is not a decision — no receipt (keeps the store from
       // filling with probes; the follow-up phaedo_consult writes its own).
       if (matchedPreGuard) {
-        const rid = await emitReceipt('phaedo_check_authorization', req, { signal: response.signal, confidence: 1.0, deference_level: 'high' });
+        const rid = await emitReceipt('phaedo_check_authorization', req, { signal: response.signal, confidence: 1.0, deference_level: 'high' },
+          ruleAnsweredDriver(vd, req, response));
         if (rid) response.receipt_id = rid;
         await maybeDepositReceiptsDigest();                          // G1+G2 audit channel — only on a matched preflight (no-match writes no receipt)
       }
@@ -591,6 +603,7 @@ server.registerTool(
       const response = withStaleAuthorityGuard(raw, vd, await guardFacts(vd, req));
       let drivers = [];
       try { drivers = withRevision(consultDrivers(vd, req, CONSULT_OPTS), raw); } catch { /* non-critical */ }
+      drivers = [...ruleAnsweredDriver(vd, req, response), ...drivers];
       const escReceiptId = await emitReceipt('phaedo_escalate', req, response, drivers);   // the decision being escalated
       await maybeDepositReceiptsDigest();                              // G1+G2 audit channel
 

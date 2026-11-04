@@ -227,6 +227,7 @@ try {
       ok(/standing rule/.test(h.additionalContext) && h.additionalContext.includes('receipt_id rcpt-1'), 'agent told it ran under the rule, with the receipt id');
       ok(/one "no" pauses the rule/.test(h.additionalContext), 'agent told how a no stops it');
       ok(log.receipts[0].drivers.some((d) => d.cue === 'standingGrant' && d.value === 'answered'), 'receipt says the rule answered');
+      ok(log.receipts[0].drivers[0].cue === 'standingGrant', 'and says it first (receipts keep only 16 drivers; the phone\'s weekly count reads it)');
       ok(readState(deps.statePath).pending['tu-1'].granted === true, 'pending entry marked granted');
       await runShipHook(post(), deps);
       ok(log.marks.length === 0, 'an allowed run records no outcome — silence is not approval');

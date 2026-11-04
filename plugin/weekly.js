@@ -10,7 +10,10 @@
 //   came_to_you — Phaedo said check with you (escalate / clarify)
 //   unsure      — Phaedo didn't know (insufficient_signal); the agent fell back to its own default
 //
-// "Handled" is went_ahead + stopped. Pure over the receipts list; the CLI reads the local store.
+// "Handled" is went_ahead + stopped. `by_rule` is the part of went_ahead that one of the subject's
+// standing rules decided — the receipt carries a `standingRule` (server) or `standingGrant` (ship
+// hook) driver saying so — which is how they see a rule they accepted actually being used.
+// Pure over the receipts list; the CLI reads the local store.
 //
 //   npm run week
 
@@ -27,14 +30,30 @@ const BUCKET = {
   insufficient_signal: 'unsure',
 };
 
+// The driver cues that mean "a standing rule answered this" (server.js ruleAnsweredDriver,
+// hooks/pre-ship.mjs). A held grant is recorded as `held:<why>`, so only 'answered' counts.
+export const RULE_CUES = new Set(['standingRule', 'standingGrant']);
+export function answeredByRule(r) {
+  return Array.isArray(r?.drivers) && r.drivers.some((d) => RULE_CUES.has(d?.cue) && d?.value === 'answered');
+}
+
+/** The server's driver for a receipt a standing rule decided: an authorization that matched and
+ *  said go ahead, AND an answer that still says go ahead after the stale-authority guard — one the
+ *  guard withheld went to the subject instead, so the rule did not decide it. */
+export function standingRuleDriver(auth, response) {
+  return auth?.authorization_matched === true && auth.signal === 'proceed' && response?.signal === 'proceed'
+    ? [{ cue: 'standingRule', value: 'answered', confidence: 1, basis: 'authored' }] : [];
+}
+
 export function weeklyHandled(receipts, { now = Date.now(), days = WEEK_DAYS } = {}) {
   const since = now - days * DAY_MS;
-  const out = { days, went_ahead: 0, stopped: 0, came_to_you: 0, unsure: 0 };
+  const out = { days, went_ahead: 0, by_rule: 0, stopped: 0, came_to_you: 0, unsure: 0 };
   for (const r of Array.isArray(receipts) ? receipts : []) {
     const t = Date.parse(r?.created_at);
     if (!Number.isFinite(t) || t < since || t > now) continue;
     const b = BUCKET[r?.response?.signal];
     if (b) out[b]++;
+    if (b === 'went_ahead' && answeredByRule(r)) out.by_rule++;
   }
   out.handled = out.went_ahead + out.stopped;
   out.total = out.handled + out.came_to_you + out.unsure;
@@ -53,8 +72,9 @@ export function formatWeekly(w) {
     ? `This week Phaedo handled ${plural(w.handled, 'decision')} without interrupting you (${parts.join(', ')})`
     : 'This week Phaedo handled no decisions on its own';
   const asked = w.came_to_you ? ` and brought ${w.came_to_you} to you` : '';
+  const rule = w.by_rule ? ` Your standing rule decided ${w.handled === 1 ? 'it' : `${w.by_rule === 1 ? 'one' : w.by_rule} of them`}.` : '';
   const unsure = w.unsure ? ` ${w.unsure === 1 ? 'One more was' : `${w.unsure} more were`} too unclear to call.` : '';
-  return `${handled}${asked}.${unsure}`;
+  return `${handled}${asked}.${rule}${unsure}`;
 }
 
 if (isMainModule(import.meta.url)) {

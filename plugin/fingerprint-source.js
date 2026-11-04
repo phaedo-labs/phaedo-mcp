@@ -15,6 +15,7 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { hasPairingRecord, loadPairingRecord, loadFingerprintFromPhone, PhoneError } from './phone-source.js';
 import { defaultStateDir, writeCache, readCache, clearCache } from './cache.js';
+import { maybeDrainProfileCopy } from './profile-inbox.js';
 import { foldLocalCapture, isLocalCaptureOwner, localCaptureSessionCount } from './capture-local.js';
 import { Capabilities, AuthoredSource } from './lib/phaedo-crypto.js';
 import { PhaedoError } from './errors.js';
@@ -307,8 +308,11 @@ async function loadFingerprintUnfiltered(baseDir) {
         await clearCache(stateDir);
         throw err;
       }
+      // Phone unreachable → the copy the phone last pushed for us, if it is newer (profile-inbox.js),
+      // then the encrypted cache (may be stale).
+      await maybeDrainProfileCopy(async () => rec, stateDir);
       const cached = await readCache(stateDir);
-      if (cached) return stamp(foldConfigHome(normalizeIdentity(cached.vault)), cached); // phone unreachable → encrypted cache (may be stale)
+      if (cached) return stamp(foldConfigHome(normalizeIdentity(cached.vault)), cached);
       throw err;                        // no phone + no cache → cannot serve
     }
   }
@@ -371,6 +375,9 @@ async function loadFingerprintUnfiltered(baseDir) {
 // escalation in flight.
 export async function loadFingerprintPreferCache(baseDir, opts) {
   if (!process.env.PHAEDO_FINGERPRINT && hasPairingRecord(baseDir)) {
+    // The phone pushes a fresh copy whenever its app opens or the profile changes; take it first
+    // (throttled, fail-fast — this is the ship hook's path). See profile-inbox.js.
+    await maybeDrainProfileCopy(() => loadPairingRecord(baseDir), defaultStateDir());
     const cached = await readCache(defaultStateDir());
     if (cached) return forgetting(stamp(foldConfigHome(normalizeIdentity(cached.vault)), cached), opts);
   }

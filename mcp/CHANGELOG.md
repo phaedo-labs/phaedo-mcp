@@ -1,5 +1,49 @@
 # Changelog — phaedo-mcp
 
+## 0.3.21 — unreleased
+
+### Your phone keeps this computer's copy of your profile fresh
+
+The live read needs the phone's app open on the same Wi-Fi and a Face ID tap, so on the reference
+Mac it almost never happened: the saved copy was 11 days old, past the 7 days a standing rule may
+run on, so an accepted rule would have stopped applying. Now the phone sends a fresh, encrypted copy
+through the relay whenever its app opens (at most every 10 minutes) and whenever your profile
+changes — including when you remove a rule — and this computer picks it up (`profile-inbox.js`)
+before reading its saved copy, at most every 10 minutes across all its processes.
+
+- It only refreshes the saved copy; it is never treated as a live read, so the stale-copy guard
+  and the rule leeway apply exactly as before.
+- Its age is when the phone made it, not when it arrived; a copy no newer than the one held is
+  ignored, so a replayed old copy cannot bring back a rule you removed.
+- Needs the relay deployed and the new phone build; until then the check finds nothing and
+  changes nothing.
+
+### You can see the copy keeping up, and a removed computer loses it
+
+- The receipts digest this computer already sends your phone now says when its saved copy was
+  made (`copy_at`, from `cache.js` `readCacheTime`, read without decrypting). The phone's Activity
+  screen shows one line: "Your Mac's copy of your profile was updated 2 hours ago." Past 7 days it
+  says your rules wait until it updates. A fresher copy alone is enough to send a new digest.
+- When you remove this computer on your phone, or delete your profile, the phone clears the copy
+  it left on the relay, so a removed computer can't fetch it. If the phone is offline it retries
+  on each later open until the relay confirms (the relay drops the copy after 7 days regardless).
+
+## 0.3.20 — unreleased
+
+### The weekly summary says when your rule decided something
+
+Accepting a standing rule was the end of what you could see of it: the agent stopped asking, and
+nothing said the rule was why. The weekly line on your phone (and in `npm run pull` /
+`npm run week`) now adds how many of the decisions that went ahead your rule decided — for example
+"…(12 went ahead, 2 stopped). Your standing rule decided 5 of them."
+
+Each receipt a rule decided now carries a driver saying so: `standingRule: answered` from
+`phaedo_consult`, `phaedo_check_authorization` and `phaedo_escalate` (only when the answer still
+says go ahead after the stale-copy guard — one it withheld came to you), and the ship hook's
+existing `standingGrant: answered`, now listed first so the 16-driver cap can never drop it. The
+drivers stay on this computer; only the count and the sentence reach the phone, inside the digest
+it already reads, so the phone app needs no update.
+
 ## 0.3.19 — unreleased
 
 ### A merge and a direct question get the same answer
